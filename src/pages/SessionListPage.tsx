@@ -239,7 +239,12 @@ function SessionCard({
             ["Updated", formatDate(session.updatedAt)],
             ["Tokens", formatTokens(totalTokens(session.usage))],
             ["Peak ctx", formatTokens(session.peakContextTokens)],
-            ["Turns", String(session.turnCount)],
+            [
+              "Turns",
+              session.subagentTurnCount > 0
+                ? `${session.turnCount} · +${session.subagentTurnCount} sub`
+                : String(session.turnCount),
+            ],
             [
               "Tools / agents",
               `${session.toolCallCount} / ${1 + session.subagentCount}`,
@@ -650,8 +655,18 @@ export function SessionListPage() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
-                          {s.turnCount}
+                        <Typography
+                          variant="mono"
+                          sx={{ fontSize: "0.85rem" }}
+                          title={
+                            s.subagentTurnCount > 0
+                              ? `${s.turnCount} root turns · ${s.subagentTurnCount} subagent turns`
+                              : `${s.turnCount} root turns`
+                          }
+                        >
+                          {s.subagentTurnCount > 0
+                            ? `${s.turnCount} · +${s.subagentTurnCount}`
+                            : s.turnCount}
                         </Typography>
                       </TableCell>
                       <TableCell>

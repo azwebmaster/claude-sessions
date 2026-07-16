@@ -24,8 +24,13 @@ export interface SessionListItem {
   updatedAt: string | null;
   /** User prompts (excludes tool-result-only user rows) */
   messageCount: number;
-  /** Assistant turns with usage — matches detail timeline length */
+  /** Assistant turns with usage — matches detail timeline length (root only) */
   turnCount: number;
+  /**
+   * Assistant turns with usage across all subagent transcripts.
+   * Not included in `turnCount` / the root context timeline.
+   */
+  subagentTurnCount: number;
   toolCallCount: number;
   subagentCount: number;
   model: string | null;
@@ -292,6 +297,8 @@ export interface AgentBreakdownRow {
   peakContextTokens: number;
   toolCallCount: number;
   messageCount: number;
+  /** Assistant turns with usage in this agent's transcript */
+  turnCount: number;
   /** Per-tool call counts within this agent's transcript */
   tools: AgentToolSummary[];
 }

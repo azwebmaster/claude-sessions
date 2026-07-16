@@ -80,7 +80,12 @@ export function AgentBreakdown({
 
   const maxPeak = Math.max(...rows.map((r) => r.peakContextTokens), 1);
   const maxTools = Math.max(...rows.map((r) => r.toolCallCount), 1);
+  const maxTurns = Math.max(...rows.map((r) => r.turnCount), 1);
   const totalTools = rows.reduce((sum, r) => sum + r.toolCallCount, 0);
+  const totalTurns = rows.reduce((sum, r) => sum + r.turnCount, 0);
+  const subagentTurns = rows
+    .filter((r) => r.kind === "subagent")
+    .reduce((sum, r) => sum + r.turnCount, 0);
   const totalTokensAll = rows.reduce((sum, r) => sum + totalTokens(r.usage), 0);
   const peakOverall = Math.max(...rows.map((r) => r.peakContextTokens), 0);
 
@@ -104,13 +109,21 @@ export function AgentBreakdown({
           display: "grid",
           gridTemplateColumns: {
             xs: "repeat(2, minmax(0, 1fr))",
-            sm: "repeat(4, minmax(0, 1fr))",
+            sm: "repeat(3, minmax(0, 1fr))",
+            md: "repeat(5, minmax(0, 1fr))",
           },
           gap: 0.75,
         }}
       >
         {[
           { label: "Agents", value: String(rows.length) },
+          {
+            label: "Turns",
+            value:
+              subagentTurns > 0
+                ? `${totalTurns} · ${subagentTurns} sub`
+                : String(totalTurns),
+          },
           { label: "Tool calls", value: String(totalTools) },
           { label: "Peak context", value: formatTokens(peakOverall) },
           { label: "Token usage", value: formatTokens(totalTokensAll) },
@@ -256,6 +269,8 @@ export function AgentBreakdown({
                     {row.kind.replace("_", " ")}
                     {row.model ? ` · ${row.model.replace(/^claude-/, "")}` : ""}
                     {" · "}
+                    {row.turnCount} turns
+                    {" · "}
                     {row.messageCount} msgs
                   </Typography>
                 </Box>
@@ -274,6 +289,12 @@ export function AgentBreakdown({
                   valueLabel={formatTokens(row.peakContextTokens)}
                   percent={(row.peakContextTokens / maxPeak) * 100}
                   color={parts.cacheRead}
+                />
+                <MetricBar
+                  label="Turns"
+                  valueLabel={String(row.turnCount)}
+                  percent={(row.turnCount / maxTurns) * 100}
+                  color={parts.output}
                 />
                 <MetricBar
                   label="Tool calls"
