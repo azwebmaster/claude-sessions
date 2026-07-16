@@ -11,11 +11,13 @@ import {
 import type { ToolImpactCall, ToolImpactRow } from "@shared/types";
 import { formatTokens } from "@shared/types";
 import { formatDate, shortId } from "../lib/api";
-import { alertSurface } from "../theme";
+import { alertSurface, focusHighlight } from "../theme";
 import { EmptyState, ExpandableRow } from "./ui";
 
 interface Props {
   rows: ToolImpactRow[];
+  focusedToolUseId?: string | null;
+  onSelectCall?: (toolUseId: string) => void;
 }
 
 function sharePercent(value: number, total: number): number {
@@ -31,12 +33,33 @@ function callHeadline(call: ToolImpactCall): string {
   );
 }
 
-function CallDetail({ call }: { call: ToolImpactCall }) {
+function CallDetail({
+  call,
+  selected,
+  onSelect,
+}: {
+  call: ToolImpactCall;
+  selected: boolean;
+  onSelect?: (toolUseId: string) => void;
+}) {
+  const theme = useTheme();
+  const highlight = focusHighlight(theme);
   const headline = call.inputPreview;
   const supporting = call.resultPreview;
+  const selectable = Boolean(onSelect);
 
   return (
     <Box
+      component={selectable ? "button" : "div"}
+      type={selectable ? "button" : undefined}
+      onClick={
+        selectable
+          ? () => {
+              onSelect?.(call.toolUseId);
+            }
+          : undefined
+      }
+      aria-pressed={selectable ? selected : undefined}
       sx={{
         display: "grid",
         gridTemplateColumns: {
@@ -47,10 +70,34 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
         px: { xs: 1, sm: 1.25 },
         py: 1,
         borderRadius: 1,
-        bgcolor: "background.paper",
+        bgcolor: selected ? highlight.bgcolor : "background.paper",
         border: 1,
-        borderColor: "divider",
+        borderColor: selected ? highlight.borderColor : "divider",
+        boxShadow: selected ? highlight.boxShadow : "none",
         minWidth: 0,
+        width: "100%",
+        textAlign: "left",
+        font: "inherit",
+        color: "inherit",
+        cursor: selectable ? "pointer" : "default",
+        transition:
+          "border-color 150ms ease, background 150ms ease, box-shadow 150ms ease",
+        "&:hover": selectable
+          ? {
+              borderColor: selected
+                ? highlight.borderColor
+                : "text.secondary",
+              bgcolor: selected
+                ? alpha(theme.palette.warning.main, 0.14)
+                : "action.hover",
+            }
+          : undefined,
+        "&:focus-visible": selectable
+          ? {
+              outline: `2px solid ${theme.palette.warning.main}`,
+              outlineOffset: 2,
+            }
+          : undefined,
       }}
     >
       <Box sx={{ minWidth: 0 }}>
@@ -146,7 +193,11 @@ function TopCallPreview({ calls }: { calls: ToolImpactCall[] }) {
   );
 }
 
-export function ToolImpactList({ rows }: Props) {
+export function ToolImpactList({
+  rows,
+  focusedToolUseId = null,
+  onSelectCall,
+}: Props) {
   const theme = useTheme();
   const [selected, setSelected] = useState<string | null>(
     rows[0]?.toolName ?? null,
@@ -155,6 +206,14 @@ export function ToolImpactList({ rows }: Props) {
   useEffect(() => {
     setSelected(rows[0]?.toolName ?? null);
   }, [rows]);
+
+  useEffect(() => {
+    if (!focusedToolUseId) return;
+    const owner = rows.find((row) =>
+      row.calls.some((call) => call.toolUseId === focusedToolUseId),
+    );
+    if (owner) setSelected(owner.toolName);
+  }, [focusedToolUseId, rows]);
 
   if (rows.length === 0) {
     return <EmptyState>No tool calls recorded.</EmptyState>;
@@ -173,6 +232,10 @@ export function ToolImpactList({ rows }: Props) {
   const top = rows[0];
   const topShare = sharePercent(top.contextGrowthAttributed, totalGrowth);
   const errorSurface = alertSurface(theme, "error");
+
+  const focusCall = (toolUseId: string) => {
+    onSelectCall?.(toolUseId);
+  };
 
   return (
     <Stack spacing={1.25}>
@@ -217,6 +280,7 @@ export function ToolImpactList({ rows }: Props) {
             maxMetric) *
           100;
         const isTop = index === 0 && row.contextGrowthAttributed > 0;
+        const heaviestCall = calls[0];
 
         return (
           <Box
@@ -239,11 +303,12 @@ export function ToolImpactList({ rows }: Props) {
           >
             <ExpandableRow
               expanded={open}
-              onActivate={() =>
+              onActivate={() => {
                 setSelected((cur) =>
                   cur === row.toolName ? null : row.toolName,
-                )
-              }
+                );
+                if (heaviestCall) focusCall(heaviestCall.toolUseId);
+              }}
               leading={
                 <Chip
                   size="small"
@@ -336,7 +401,12 @@ export function ToolImpactList({ rows }: Props) {
                   </Typography>
                 ) : (
                   calls.map((call) => (
-                    <CallDetail key={call.toolUseId} call={call} />
+                    <CallDetail
+                      key={call.toolUseId}
+                      call={call}
+                      selected={focusedToolUseId === call.toolUseId}
+                      onSelect={onSelectCall ? focusCall : undefined}
+                    />
                   ))
                 )}
               </Stack>
