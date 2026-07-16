@@ -19,26 +19,45 @@ export function AgentBreakdown({ rows }: Props) {
           key={row.agentId}
           sx={{
             display: "grid",
-            gridTemplateColumns: "1fr auto",
-            gap: 1,
-            px: 1.25,
+            gridTemplateColumns: {
+              xs: "minmax(0, 1fr)",
+              sm: "minmax(0, 1fr) auto",
+            },
+            gap: { xs: 0.5, sm: 1 },
+            px: { xs: 1, sm: 1.25 },
             py: 1,
             borderRadius: 1,
             bgcolor: "action.hover",
             border: 1,
             borderColor: "divider",
+            minWidth: 0,
           }}
         >
-          <Box>
-            <Typography variant="subtitle2">{row.label}</Typography>
-            <Typography variant="mono" color="text.secondary" sx={{ fontSize: "0.75rem" }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle2" sx={{ wordBreak: "break-word" }}>
+              {row.label}
+            </Typography>
+            <Typography
+              variant="mono"
+              color="text.secondary"
+              sx={{ fontSize: "0.75rem", wordBreak: "break-word", lineHeight: 1.35 }}
+            >
               {row.kind.replace("_", " ")}
               {row.model ? ` · ${row.model.replace(/^claude-/, "")}` : ""}
               {" · "}
               {row.toolCallCount} tools · {row.messageCount} msgs
             </Typography>
           </Box>
-          <Box sx={{ textAlign: "right" }}>
+          <Box
+            sx={{
+              textAlign: { xs: "left", sm: "right" },
+              display: "flex",
+              flexDirection: { xs: "row", sm: "column" },
+              flexWrap: "wrap",
+              alignItems: { xs: "baseline", sm: "flex-end" },
+              gap: { xs: 1, sm: 0 },
+            }}
+          >
             <Typography variant="mono">{formatTokens(totalTokens(row.usage))}</Typography>
             <Typography variant="caption" color="text.secondary">
               peak {formatTokens(row.peakContextTokens)}

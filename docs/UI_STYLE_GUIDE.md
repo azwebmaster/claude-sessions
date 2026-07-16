@@ -70,11 +70,20 @@ Font stacks (loaded in `index.html`):
 | Constant | Value | Usage |
 | --- | --- | --- |
 | `layout.maxWidth` | 1280px | App shell max width |
-| `layout.pagePaddingX` | 16px (`2` spacing units) | Horizontal page inset |
-| `layout.sectionPadding` | 20px (`2.5`) | `SectionPaper` internal padding |
-| `layout.sectionGap` | 16px (`2`) | Gap between major sections |
+| `layout.pagePaddingX` | `{ xs: 1.25, sm: 2, md: 2.5 }` | Horizontal page inset (spacing units) |
+| `layout.pagePaddingY` | `{ xs: 2, sm: 2.5, md: 3 }` | Top page inset |
+| `layout.sectionPadding` | `{ xs: 1.5, sm: 2, md: 2.5 }` | `SectionPaper` internal padding |
+| `layout.sectionGap` | `{ xs: 1.5, sm: 2 }` | Gap between major sections |
+| `layout.tableMinBreakpoint` | `md` | Session list switches from cards → table |
 
-Responsive grids use MUI breakpoint objects: `{ xs: "...", md: "..." }`.
+Responsive grids use MUI breakpoint objects: `{ xs: "...", md: "..." }`. Prefer `minmax(0, 1fr)` and `minWidth: 0` on flex/grid children so long paths and mono metrics wrap instead of overflowing the viewport.
+
+### Breakpoint patterns
+
+- **Session list:** stacked metric cards below `md`; full table from `md` up (with horizontal scroll if needed).
+- **Session detail:** single column through `md`; two-column hierarchy / side panels from `lg`.
+- **Expandable rows:** trailing metrics wrap under the label on `xs`; side-by-side from `sm`.
+- **Context chart:** horizontal scroll when many turns; bars keep a tappable min width.
 
 ## Components
 
