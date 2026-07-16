@@ -285,7 +285,7 @@ export function SessionDetailPage() {
       >
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line; use the chevron to expand or collapse. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn." : ""}`}
         >
           <Box
             sx={{
