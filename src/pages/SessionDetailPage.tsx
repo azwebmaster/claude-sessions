@@ -15,7 +15,7 @@ import {
   contextSize,
 } from "@shared/types";
 import { api, formatDate } from "../lib/api";
-import { findAncestorIds, findNode } from "../lib/tree";
+import { findAncestorIds, findNode, findOwningAgentId } from "../lib/tree";
 import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
@@ -84,6 +84,11 @@ export function SessionDetailPage() {
     const ancestors = findAncestorIds(detail.tree, focusedNodeId);
     if (!ancestors) return undefined;
     return new Set(ancestors);
+  }, [detail, focusedNodeId]);
+
+  const selectedAgentId = useMemo(() => {
+    if (!detail || !focusedNodeId) return null;
+    return findOwningAgentId(detail.tree, focusedNodeId);
   }, [detail, focusedNodeId]);
 
   const focusedLoadedContext = useMemo(() => {
@@ -285,7 +290,7 @@ export function SessionDetailPage() {
       >
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line; use the chevron to expand or collapse. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line; use the chevron to expand or collapse. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn or Agents row." : ""}`}
         >
           <Box
             sx={{
@@ -315,8 +320,15 @@ export function SessionDetailPage() {
         </SectionPaper>
 
         <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
-          <SectionPaper title="Agents">
-            <AgentBreakdown rows={detail.agentBreakdown} />
+          <SectionPaper
+            title="Agents"
+            description="Click an agent to highlight it in the hierarchy and expand the path to that node."
+          >
+            <AgentBreakdown
+              rows={detail.agentBreakdown}
+              selectedAgentId={selectedAgentId}
+              onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
+            />
           </SectionPaper>
 
           <SectionPaper

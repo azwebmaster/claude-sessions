@@ -24,3 +24,35 @@ export function findNode(
   }
   return null;
 }
+
+/** Path from root to the target node (inclusive), or null if not found. */
+export function findNodePath(
+  root: TreeNode,
+  targetId: string,
+): TreeNode[] | null {
+  if (root.id === targetId) return [root];
+  for (const child of root.children) {
+    const path = findNodePath(child, targetId);
+    if (path) return [root, ...path];
+  }
+  return null;
+}
+
+/**
+ * Nearest agent node id owning `nodeId` (the node itself when it is an agent,
+ * otherwise the closest root_agent / subagent ancestor).
+ */
+export function findOwningAgentId(
+  root: TreeNode,
+  nodeId: string,
+): string | null {
+  const path = findNodePath(root, nodeId);
+  if (!path) return null;
+  for (let i = path.length - 1; i >= 0; i -= 1) {
+    const node = path[i]!;
+    if (node.kind === "root_agent" || node.kind === "subagent") {
+      return node.agentId ?? node.id;
+    }
+  }
+  return null;
+}
