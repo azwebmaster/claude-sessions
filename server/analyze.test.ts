@@ -8,8 +8,10 @@ import {
   buildAnalysisBrief,
   parseAnalysisOutput,
   resolveAnalyzeCwd,
+  resolveClaudeExecutable,
   AnalyzeSessionError,
 } from "./analyze.js";
+import type { AnalyzeProgressEvent } from "../shared/types.js";
 import { buildSessionDetail, parseSessionFile } from "./parser.js";
 import { fixtureRoot } from "./sessions.js";
 
@@ -224,7 +226,9 @@ describe("analyzeSession", () => {
       () =>
         analyzeSession(detail, {
           timeoutMs: 50,
+          idleTimeoutMs: 50,
           loadExtras: async () => ({ info: null, messages: [] }),
+          resolveExecutable: () => undefined,
           runner: async function* ({ options }) {
             // Simulate the known SDK hang until abortController fires.
             const signal = options?.abortController?.signal;
@@ -242,6 +246,115 @@ describe("analyzeSession", () => {
       (err: unknown) =>
         err instanceof AnalyzeSessionError && err.code === "timeout",
     );
+  });
+
+  it("emits progress stages while analyzing", async () => {
+    const detail = await loadFixtureDetail();
+    const stages: AnalyzeProgressEvent["stage"][] = [];
+    const analysis = await analyzeSession(detail, {
+      loadExtras: async () => ({ info: null, messages: [] }),
+      resolveExecutable: () => undefined,
+      onProgress: (event) => {
+        stages.push(event.stage);
+      },
+      runner: async function* () {
+        yield {
+          type: "system",
+          subtype: "init",
+          apiKeySource: "ANTHROPIC_API_KEY",
+          claude_code_version: "test",
+          cwd: process.cwd(),
+          tools: [],
+          mcp_servers: [],
+          model: "claude-haiku-4-5",
+          permissionMode: "dontAsk",
+          slash_commands: [],
+          output_style: "default",
+          skills: [],
+          plugins: [],
+          uuid: "00000000-0000-0000-0000-000000000010",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+        yield {
+          type: "assistant",
+          message: { role: "assistant", content: [] },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-0000-0000-000000000011",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 12,
+          duration_api_ms: 10,
+          is_error: false,
+          num_turns: 1,
+          result: "",
+          stop_reason: "end_turn",
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          structured_output: {
+            summary: "Progressed through stages.",
+            findings: [],
+            recommendations: [],
+          },
+          uuid: "00000000-0000-0000-0000-000000000012",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+      },
+    });
+    assert.match(analysis.summary, /Progressed/);
+    assert.ok(stages.includes("starting"));
+    assert.ok(stages.includes("query_start"));
+    assert.ok(stages.includes("sdk_ready"));
+    assert.ok(stages.includes("model_running"));
+    assert.ok(stages.includes("complete"));
+  });
+
+  it("passes a resolved Claude executable into the runner", async () => {
+    const detail = await loadFixtureDetail();
+    let seenPath: string | undefined;
+    await analyzeSession(detail, {
+      loadExtras: async () => ({ info: null, messages: [] }),
+      resolveExecutable: () => "/usr/local/bin/claude",
+      runner: async function* ({ options }) {
+        seenPath = options?.pathToClaudeCodeExecutable;
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          is_error: false,
+          num_turns: 1,
+          result: "",
+          stop_reason: "end_turn",
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          structured_output: {
+            summary: "Used PATH claude.",
+            findings: [],
+            recommendations: [],
+          },
+          uuid: "00000000-0000-0000-0000-000000000013",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+      },
+    });
+    assert.equal(seenPath, "/usr/local/bin/claude");
   });
 
   it("continues when loadExtras hangs past its budget", async () => {
@@ -300,5 +413,12 @@ describe("resolveAnalyzeCwd", () => {
 
   it("uses an existing project path", () => {
     assert.equal(resolveAnalyzeCwd(process.cwd()), process.cwd());
+  });
+});
+
+describe("resolveClaudeExecutable", () => {
+  it("returns undefined or an executable path string", () => {
+    const resolved = resolveClaudeExecutable();
+    assert.ok(resolved === undefined || typeof resolved === "string");
   });
 });

@@ -1,6 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { stream } from "hono/streaming";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -12,6 +13,7 @@ import {
 } from "./sessions.js";
 import { buildSessionDetail } from "./parser.js";
 import { AnalyzeSessionError, analyzeSession } from "./analyze.js";
+import type { AnalyzeStreamEvent } from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** Package root when running from source; `dist/` when compiled. */
@@ -93,7 +95,47 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       // empty / non-JSON body is fine
     }
 
+    const accept = c.req.header("accept") ?? "";
+    const streamRequested =
+      c.req.query("stream") === "1" ||
+      accept.includes("application/x-ndjson") ||
+      accept.includes("text/event-stream");
+
     const detail = buildSessionDetail(loaded.file, loaded.parsed);
+
+    if (streamRequested) {
+      c.header("Content-Type", "application/x-ndjson; charset=utf-8");
+      c.header("Cache-Control", "no-cache, no-transform");
+      c.header("X-Content-Type-Options", "nosniff");
+      return stream(c, async (out) => {
+        const writeEvent = async (event: AnalyzeStreamEvent) => {
+          await out.write(`${JSON.stringify(event)}\n`);
+        };
+        try {
+          const analysis = await analyzeSession(detail, {
+            model,
+            onProgress: (event) => writeEvent(event),
+          });
+          await writeEvent({ type: "result", analysis });
+        } catch (err) {
+          if (err instanceof AnalyzeSessionError) {
+            await writeEvent({
+              type: "error",
+              error: err.message,
+              code: err.code,
+            });
+            return;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          await writeEvent({
+            type: "error",
+            error: message,
+            code: "unknown",
+          });
+        }
+      });
+    }
+
     try {
       const analysis = await analyzeSession(detail, { model });
       return c.json(analysis);

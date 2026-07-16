@@ -1,3 +1,5 @@
+import type { AnalyzeStreamEvent, SessionAnalysis } from "@shared/types";
+
 async function readError(res: Response): Promise<string> {
   const body = await res.text();
   if (!body) return `Request failed: ${res.status}`;
@@ -38,6 +40,81 @@ export async function apiPost<T>(
     throw new Error(await readError(res));
   }
   return res.json() as Promise<T>;
+}
+
+export type AnalyzeStreamHandlers = {
+  signal?: AbortSignal;
+  onEvent?: (event: AnalyzeStreamEvent) => void;
+};
+
+/**
+ * POST analyze with an NDJSON progress stream.
+ * Resolves with the final `result` analysis, or throws on `error` / HTTP failure.
+ */
+export async function apiAnalyzeStream(
+  sessionId: string,
+  body: unknown = {},
+  handlers: AnalyzeStreamHandlers = {},
+): Promise<SessionAnalysis> {
+  const res = await fetch(`/api/sessions/${sessionId}/analyze?stream=1`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/x-ndjson",
+    },
+    body: JSON.stringify(body ?? {}),
+    signal: handlers.signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(await readError(res));
+  }
+  if (!res.body) {
+    throw new Error("Analyze stream returned no body");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let analysis: SessionAnalysis | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      newline = buffer.indexOf("\n");
+      if (!line) continue;
+      let event: AnalyzeStreamEvent;
+      try {
+        event = JSON.parse(line) as AnalyzeStreamEvent;
+      } catch {
+        throw new Error(`Invalid analyze stream line: ${line.slice(0, 120)}`);
+      }
+      handlers.onEvent?.(event);
+      if (event.type === "result") {
+        analysis = event.analysis;
+      } else if (event.type === "error") {
+        throw new Error(event.error);
+      }
+    }
+  }
+
+  const trailing = buffer.trim();
+  if (trailing) {
+    const event = JSON.parse(trailing) as AnalyzeStreamEvent;
+    handlers.onEvent?.(event);
+    if (event.type === "result") analysis = event.analysis;
+    else if (event.type === "error") throw new Error(event.error);
+  }
+
+  if (!analysis) {
+    throw new Error("Analyze stream ended without a result");
+  }
+  return analysis;
 }
 
 export function formatDate(iso: string | null): string {
