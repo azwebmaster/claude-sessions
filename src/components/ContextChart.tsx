@@ -40,12 +40,12 @@ export function ContextChart({ points, selectedNodeId, onSelect }: Props) {
           const selected = selectedNodeId === p.nodeId;
           const delta = p.contextTokens - prev;
           const title = [
-            `Turn ${p.turn}: ${formatTokens(p.contextTokens)} context`,
+            `Turn ${p.turn}: ${formatTokens(p.contextTokens)} context occupancy`,
             i > 0
               ? delta === 0
-                ? "no change"
-                : `${delta > 0 ? "+" : ""}${formatTokens(delta)} vs prior`
-              : "first turn",
+                ? "no change vs prior turn"
+                : `${delta > 0 ? "+" : ""}${formatTokens(delta)} vs prior turn`
+              : "first turn baseline (prompt + cache), not tokens added by tools",
             p.label,
             selectable ? "Click to focus hierarchy" : "",
           ]

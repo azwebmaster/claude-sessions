@@ -225,8 +225,10 @@ export function SessionDetailPage() {
             Agent & tool hierarchy
           </Typography>
           <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-            Root agent → tool calls → results / subagents. Token chips show
-            usage; result nodes estimate how much each tool added to context.
+            Root agent → tool calls → results / subagents. Assistant chips show
+            that turn&apos;s API usage and window occupancy (ctx) — usually
+            mostly cache/input from the prompt, not a sum of child tools. Tool
+            +N est chips are estimated I/O sizes only.
             {focusedNodeId
               ? " Highlighted node matches the selected timeline turn."
               : ""}
