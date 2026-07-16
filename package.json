@@ -1,0 +1,35 @@
+{
+  "name": "claude-sessions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Visualize, profile, and optimize Claude Code sessions",
+  "scripts": {
+    "dev": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "dev:app": "pnpm dev & pnpm dev:client",
+    "build": "tsc -p tsconfig.server.json --noEmit && vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "tsx --test server/parser.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.4",
+    "hono": "^4.8.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.32",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.5.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
