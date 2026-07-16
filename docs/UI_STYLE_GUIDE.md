@@ -81,7 +81,7 @@ Responsive grids use MUI breakpoint objects: `{ xs: "...", md: "..." }`. Prefer 
 ### Breakpoint patterns
 
 - **Session list:** stacked metric cards below `md`; full table from `md` up (with horizontal scroll if needed).
-- **Session detail:** single column through `md`; two-column hierarchy / side panels from `lg`.
+- **Session detail:** major panels live in top-level tabs (Analysis, Context, Diagram, Hierarchy). Within Context, Turn detail and Loaded context are nested tabs under the chart. Hierarchy keeps a two-column layout with side panels from `lg`.
 - **Expandable rows:** trailing metrics wrap under the label on `xs`; side-by-side from `sm`.
 - **Context chart:** horizontal scroll when many turns; bars keep a tappable min width.
 
@@ -108,6 +108,7 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | `TextField` | Session filter |
 | `Chip` | Source, branch, model, kind badges |
 | `Link` | Back navigation |
+| `Tabs` / `Tab` | Session detail panels; Context turn / loaded-context sub-panels |
 | `Collapse` | Hierarchy tree, tool impact expansion |
 | `LinearProgress` | Tool impact bars, agent usage context/tool bars |
 | Inline SVG | Agent ↔ tool call diagram (bipartite links) |
