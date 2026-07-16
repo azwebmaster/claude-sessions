@@ -30,6 +30,7 @@ import { AgentToolDiagram } from "../components/AgentToolDiagram";
 import { TurnDetailPanel } from "../components/TurnDetailPanel";
 import { LoadedContextPanel } from "../components/LoadedContextPanel";
 import { LogLinePanel } from "../components/LogLinePanel";
+import { SessionAnalysisPanel } from "../components/SessionAnalysisPanel";
 import { SectionPaper, StatCard } from "../components/ui";
 import { layout, motion } from "../theme";
 
@@ -312,6 +313,8 @@ export function SessionDetailPage() {
           <StatCard label="Tool calls" value={String(meta.toolCallCount)} />
         </Box>
       </Stack>
+
+      <SessionAnalysisPanel sessionId={meta.id} />
 
       <SectionPaper
         title="Context growth"

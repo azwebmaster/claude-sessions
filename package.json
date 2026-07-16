@@ -19,12 +19,13 @@
     "serve": "node dist/cli/index.js serve",
     "start": "node dist/cli/index.js serve",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "tsx --test server/parser.test.ts src/lib/tree.test.ts"
+    "test": "tsx --test server/parser.test.ts server/analyze.test.ts src/lib/tree.test.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.211",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@hono/node-server": "^1.14.4",
@@ -33,7 +34,8 @@
     "hono": "^4.8.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.6.3"
+    "react-router-dom": "^7.6.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.15.32",

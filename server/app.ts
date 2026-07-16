@@ -11,6 +11,7 @@ import {
   loadSessionRaw,
 } from "./sessions.js";
 import { buildSessionDetail } from "./parser.js";
+import { AnalyzeSessionError, analyzeSession } from "./analyze.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** Package root when running from source; `dist/` when compiled. */
@@ -71,6 +72,42 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     });
   });
 
+  app.post("/api/sessions/:id/analyze", async (c) => {
+    const id = c.req.param("id");
+    const loaded = await loadSessionRaw(id);
+    if (!loaded) {
+      return c.json({ error: "Session not found", id }, 404);
+    }
+
+    let model: string | undefined;
+    try {
+      const body = await c.req.json();
+      if (
+        body &&
+        typeof body === "object" &&
+        typeof (body as { model?: unknown }).model === "string"
+      ) {
+        model = (body as { model: string }).model.trim() || undefined;
+      }
+    } catch {
+      // empty / non-JSON body is fine
+    }
+
+    const detail = buildSessionDetail(loaded.file, loaded.parsed);
+    try {
+      const analysis = await analyzeSession(detail, { model });
+      return c.json(analysis);
+    } catch (err) {
+      if (err instanceof AnalyzeSessionError) {
+        const status =
+          err.code === "auth" ? 503 : err.code === "empty" ? 502 : 500;
+        return c.json({ error: err.message, code: err.code }, status);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message, code: "unknown" }, 500);
+    }
+  });
+
   if (serveClient) {
     // Compiled server lives at dist/server; Vite client at dist/client.
     const clientDir = path.join(packageRoot, "client");
@@ -91,6 +128,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         <ul>
           <li><a href="/api/health">/api/health</a></li>
           <li><a href="/api/sessions">/api/sessions</a></li>
+          <li>POST /api/sessions/:id/analyze</li>
         </ul>
       </body></html>`,
       ),

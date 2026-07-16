@@ -1,8 +1,34 @@
+async function readError(res: Response): Promise<string> {
+  const body = await res.text();
+  if (!body) return `Request failed: ${res.status}`;
+  try {
+    const parsed = JSON.parse(body) as { error?: string };
+    if (parsed.error) return parsed.error;
+  } catch {
+    // keep raw body
+  }
+  return body;
+}
+
 export async function api<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `Request failed: ${res.status}`);
+    throw new Error(await readError(res));
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function apiPost<T>(
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(await readError(res));
   }
   return res.json() as Promise<T>;
 }
