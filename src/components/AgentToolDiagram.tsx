@@ -12,12 +12,15 @@ import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import RemoveIcon from "@mui/icons-material/Remove";
 import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import type { AgentBreakdownRow } from "@shared/types";
+import type { AgentBreakdownRow, ToolImpactRow } from "@shared/types";
+import { formatTokens } from "@shared/types";
 import { focusHighlight, motion, nodeKindStyle } from "../theme";
 import { EmptyState } from "./ui";
 
 interface Props {
   rows: AgentBreakdownRow[];
+  /** Optional tool impact rows; used to size tool circles by attributed context growth. */
+  toolImpact?: ToolImpactRow[];
   selectedAgentId?: string | null;
   selectedToolName?: string | null;
   onSelectAgent?: (agentId: string) => void;
@@ -41,7 +44,11 @@ interface LaidOutNode {
   sublabel: string;
   kind: "agent" | "tool";
   agentKind?: "root_agent" | "subagent";
-  callWeight: number;
+  /** Normalized 0–1 weight used for circle radius (context-based). */
+  contextWeight: number;
+  /** Pixel radius of the node circle. */
+  radius: number;
+  contextTokens: number;
 }
 
 interface ViewTransform {
@@ -61,13 +68,20 @@ type DragMode =
     };
 
 const MAX_TOOLS = 12;
-const WORLD_W = 720;
-const WORLD_H = 420;
-const NODE_H = 36;
-const NODE_W = 128;
-const MIN_SCALE = 0.45;
+/** Expanded world so the radial layout has room to breathe. */
+const WORLD_W = 960;
+const WORLD_H = 720;
+const MIN_SCALE = 0.35;
 const MAX_SCALE = 2.75;
 const ZOOM_STEP = 1.18;
+
+const AGENT_R_MIN = 28;
+const AGENT_R_MAX = 64;
+const TOOL_R_MIN = 22;
+const TOOL_R_MAX = 48;
+/** Distance from center to subagent ring / tool ring. */
+const SUBAGENT_RING = 210;
+const TOOL_RING = 340;
 
 function pluralize(count: number, singular: string, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
@@ -76,9 +90,9 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
 function shortAgentLabel(label: string): string {
   if (label.startsWith("Subagent · ")) {
     const id = label.slice("Subagent · ".length);
-    return id.length > 18 ? `${id.slice(0, 16)}…` : id;
+    return id.length > 14 ? `${id.slice(0, 12)}…` : id;
   }
-  return label.length > 22 ? `${label.slice(0, 20)}…` : label;
+  return label.length > 16 ? `${label.slice(0, 14)}…` : label;
 }
 
 /** Stable pseudo-random in [0, 1) from a string seed. */
@@ -95,47 +109,65 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-function initialScatterPositions(
+/** Map a 0–1 weight to a radius; sqrt keeps areas closer to perceptual scale. */
+function radiusFromWeight(weight: number, minR: number, maxR: number): number {
+  const w = clamp(weight, 0, 1);
+  return minR + Math.sqrt(w) * (maxR - minR);
+}
+
+/**
+ * Default layout: root agent at the world center, subagents on an inner ring,
+ * tools on an expanded outer ring.
+ */
+function initialRadialPositions(
   agents: LaidOutNode[],
   tools: LaidOutNode[],
 ): Record<string, Point> {
   const positions: Record<string, Point> = {};
-  const padX = NODE_W / 2 + 24;
-  const padY = NODE_H / 2 + 28;
-  const agentBand = { x0: padX, x1: WORLD_W * 0.42, y0: padY, y1: WORLD_H - padY };
-  const toolBand = {
-    x0: WORLD_W * 0.58,
-    x1: WORLD_W - padX,
-    y0: padY,
-    y1: WORLD_H - padY,
-  };
+  const cx = WORLD_W / 2;
+  const cy = WORLD_H / 2;
 
-  const place = (
+  // Prefer the root agent at center; fall back to the first agent.
+  const centerAgent =
+    agents.find((a) => a.agentKind === "root_agent") ?? agents[0];
+  const ringAgents = agents.filter((a) => a.id !== centerAgent?.id);
+
+  if (centerAgent) {
+    positions[centerAgent.id] = { x: cx, y: cy };
+  }
+
+  const placeOnRing = (
     nodes: LaidOutNode[],
-    band: { x0: number; x1: number; y0: number; y1: number },
-    side: "agent" | "tool",
+    ringRadius: number,
+    angleOffset: number,
   ) => {
-    const n = Math.max(nodes.length, 1);
+    const n = nodes.length;
+    if (n === 0) return;
     nodes.forEach((node, i) => {
-      const t = n === 1 ? 0.5 : i / (n - 1);
-      const jitterX = (hash01(`${node.id}:x`) - 0.5) * (band.x1 - band.x0) * 0.55;
-      const jitterY = (hash01(`${node.id}:y`) - 0.5) * 36;
-      const baseY = band.y0 + t * (band.y1 - band.y0);
-      // Mild arc so the scatter reads as flow left → right
-      const arc =
-        side === "agent"
-          ? Math.sin(t * Math.PI) * ((band.x1 - band.x0) * 0.12)
-          : -Math.sin(t * Math.PI) * ((band.x1 - band.x0) * 0.12);
-      const baseX = (band.x0 + band.x1) / 2 + arc;
+      const baseAngle =
+        n === 1
+          ? angleOffset
+          : angleOffset + (i / n) * Math.PI * 2 - Math.PI / 2;
+      const jitter =
+        (hash01(`${node.id}:ang`) - 0.5) * (n > 1 ? (Math.PI * 2) / n : 0) * 0.35;
+      const rJitter = (hash01(`${node.id}:r`) - 0.5) * ringRadius * 0.12;
+      const angle = baseAngle + jitter;
+      const r = ringRadius + rJitter;
       positions[node.id] = {
-        x: clamp(baseX + jitterX, band.x0, band.x1),
-        y: clamp(baseY + jitterY, band.y0, band.y1),
+        x: clamp(cx + Math.cos(angle) * r, node.radius + 16, WORLD_W - node.radius - 16),
+        y: clamp(cy + Math.sin(angle) * r, node.radius + 16, WORLD_H - node.radius - 16),
       };
     });
   };
 
-  place(agents, agentBand, "agent");
-  place(tools, toolBand, "tool");
+  // Subagents (and extra roots) on the inner ring; tools on the expanded outer ring.
+  placeOnRing(ringAgents, SUBAGENT_RING, 0);
+  placeOnRing(
+    tools,
+    TOOL_RING,
+    tools.length > 0 ? Math.PI / tools.length : 0,
+  );
+
   return positions;
 }
 
@@ -161,7 +193,7 @@ function zoomAt(
 
 function fitView(containerW: number, containerH: number): ViewTransform {
   const scale = clamp(
-    Math.min(containerW / WORLD_W, containerH / WORLD_H) * 0.96,
+    Math.min(containerW / WORLD_W, containerH / WORLD_H) * 0.92,
     MIN_SCALE,
     MAX_SCALE,
   );
@@ -174,6 +206,7 @@ function fitView(containerW: number, containerH: number): ViewTransform {
 
 export function AgentToolDiagram({
   rows,
+  toolImpact = [],
   selectedAgentId = null,
   selectedToolName = null,
   onSelectAgent,
@@ -189,6 +222,14 @@ export function AgentToolDiagram({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragMode | null>(null);
   const movedRef = useRef(false);
+
+  const toolContextByName = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of toolImpact) {
+      map.set(row.toolName, row.contextGrowthAttributed);
+    }
+    return map;
+  }, [toolImpact]);
 
   const { links, agentNodes, toolNodes, hiddenToolCount, totalCalls, layoutKey } =
     useMemo(() => {
@@ -214,24 +255,46 @@ export function AgentToolDiagram({
         .map(([toolName, callCount]) => ({ toolName, callCount }));
       const visible = ranked.slice(0, MAX_TOOLS);
       const visibleNames = new Set(visible.map((t) => t.toolName));
-      const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
-      const maxAgentCalls = Math.max(...rows.map((r) => r.toolCallCount), 1);
 
-      const agents: LaidOutNode[] = rows.map((row) => ({
-        id: row.agentId,
-        label: shortAgentLabel(row.label),
-        sublabel: pluralize(row.toolCallCount, "call"),
-        kind: "agent" as const,
-        agentKind: row.kind,
-        callWeight: row.toolCallCount / maxAgentCalls,
-      }));
-      const tools: LaidOutNode[] = visible.map((tool) => ({
-        id: tool.toolName,
-        label: tool.toolName,
-        sublabel: `${tool.callCount}×`,
-        kind: "tool" as const,
-        callWeight: tool.callCount / maxToolCalls,
-      }));
+      const maxAgentCtx = Math.max(...rows.map((r) => r.peakContextTokens), 1);
+      const toolCtxValues = visible.map(
+        (t) => toolContextByName.get(t.toolName) ?? 0,
+      );
+      const maxToolCtx = Math.max(...toolCtxValues, 1);
+      // If no tool impact data, fall back to call volume so sizes still vary.
+      const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
+      const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
+
+      const agents: LaidOutNode[] = rows.map((row) => {
+        const contextWeight = row.peakContextTokens / maxAgentCtx;
+        return {
+          id: row.agentId,
+          label: shortAgentLabel(row.label),
+          sublabel: formatTokens(row.peakContextTokens),
+          kind: "agent" as const,
+          agentKind: row.kind,
+          contextWeight,
+          radius: radiusFromWeight(contextWeight, AGENT_R_MIN, AGENT_R_MAX),
+          contextTokens: row.peakContextTokens,
+        };
+      });
+      const tools: LaidOutNode[] = visible.map((tool) => {
+        const ctx = toolContextByName.get(tool.toolName) ?? 0;
+        const contextWeight = useToolCallsFallback
+          ? tool.callCount / maxToolCalls
+          : ctx / maxToolCtx;
+        return {
+          id: tool.toolName,
+          label: tool.toolName,
+          sublabel: useToolCallsFallback
+            ? `${tool.callCount}×`
+            : formatTokens(ctx),
+          kind: "tool" as const,
+          contextWeight,
+          radius: radiusFromWeight(contextWeight, TOOL_R_MIN, TOOL_R_MAX),
+          contextTokens: ctx,
+        };
+      });
 
       return {
         links: linkList.filter((l) => visibleNames.has(l.toolName)),
@@ -244,19 +307,19 @@ export function AgentToolDiagram({
           ...tools.map((t) => t.id),
         ].join("|"),
       };
-    }, [rows]);
+    }, [rows, toolContextByName]);
 
   const [positions, setPositions] = useState<Record<string, Point>>(() =>
-    initialScatterPositions(agentNodes, toolNodes),
+    initialRadialPositions(agentNodes, toolNodes),
   );
   const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const layoutKeyRef = useRef(layoutKey);
 
-  // Re-scatter when the agent/tool set changes (not when call counts alone update).
+  // Re-layout when the agent/tool set changes (not when counts alone update).
   useEffect(() => {
     if (layoutKeyRef.current === layoutKey) return;
     layoutKeyRef.current = layoutKey;
-    setPositions(initialScatterPositions(agentNodes, toolNodes));
+    setPositions(initialRadialPositions(agentNodes, toolNodes));
   }, [layoutKey, agentNodes, toolNodes]);
 
   // Fit the world into the viewport when the graph membership changes.
@@ -308,8 +371,14 @@ export function AgentToolDiagram({
     [agentNodes, toolNodes],
   );
 
+  const nodeRadiusById = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of allNodes) map.set(n.id, n.radius);
+    return map;
+  }, [allNodes]);
+
   const resetLayout = useCallback(() => {
-    setPositions(initialScatterPositions(agentNodes, toolNodes));
+    setPositions(initialRadialPositions(agentNodes, toolNodes));
     const el = viewportRef.current;
     if (el) {
       const rect = el.getBoundingClientRect();
@@ -472,20 +541,25 @@ export function AgentToolDiagram({
         : node.agentKind === "subagent"
           ? subStyle
           : rootStyle;
-    const w = NODE_W;
-    const h = NODE_H;
+    const r = node.radius;
     const selectable =
       node.kind === "agent" ? Boolean(onSelectAgent) : Boolean(onSelectTool);
     const label =
-      node.kind === "tool" && node.label.length > 16
-        ? `${node.label.slice(0, 14)}…`
+      node.kind === "tool" && node.label.length > 12
+        ? `${node.label.slice(0, 10)}…`
         : node.label;
+    const kindHint =
+      node.kind === "tool"
+        ? "tool"
+        : node.agentKind === "subagent"
+          ? "subagent"
+          : "root agent";
 
     return (
       <g
         key={node.id}
         data-diagram-node={node.id}
-        transform={`translate(${pos.x - w / 2}, ${pos.y - h / 2})`}
+        transform={`translate(${pos.x}, ${pos.y})`}
         opacity={faded ? 0.28 : 1}
         style={{
           cursor: "grab",
@@ -503,51 +577,46 @@ export function AgentToolDiagram({
           }
         }}
       >
-        <title>{`${node.label} · ${node.sublabel} · drag to rearrange`}</title>
-        <rect
-          width={w}
-          height={h}
-          rx={8}
+        <title>{`${node.label} (${kindHint}) · ${node.sublabel} context · drag to rearrange`}</title>
+        <circle
+          r={r}
           fill={
             selected
               ? highlight.bgcolor
-              : alpha(theme.palette.background.paper, 0.95)
+              : alpha(theme.palette.background.paper, 0.96)
           }
-          stroke={
-            selected ? highlight.borderColor : alpha(theme.palette.divider, 1)
-          }
-          strokeWidth={selected ? 2 : 1}
-          filter={`drop-shadow(0 1px 2px ${alpha(theme.palette.common.black, 0.12)})`}
+          stroke={selected ? highlight.borderColor : chip.color}
+          strokeWidth={selected ? 2.5 : 2}
+          filter={`drop-shadow(0 1px 3px ${alpha(theme.palette.common.black, 0.14)})`}
         />
-        <rect x={0} y={0} width={4} height={h} rx={2} fill={chip.color} />
-        {/* Size cue from call volume */}
         <circle
-          cx={w - 12}
-          cy={10}
-          r={3 + node.callWeight * 3}
-          fill={chip.color}
-          opacity={0.85}
+          r={r}
+          fill={alpha(chip.color, selected ? 0.22 : 0.12)}
+          stroke="none"
+          style={{ pointerEvents: "none" }}
         />
         <text
-          x={14}
-          y={15}
+          textAnchor="middle"
+          y={-2}
           fill={theme.palette.text.primary}
-          fontSize={12}
+          fontSize={r >= 40 ? 12 : 10}
           fontWeight={600}
           fontFamily={
             node.kind === "tool"
               ? theme.typography.mono?.fontFamily
               : undefined
           }
+          style={{ pointerEvents: "none" }}
         >
           {label}
         </text>
         <text
-          x={14}
-          y={28}
+          textAnchor="middle"
+          y={r >= 36 ? 14 : 12}
           fill={theme.palette.text.secondary}
           fontSize={10}
           fontFamily={theme.typography.mono?.fontFamily}
+          style={{ pointerEvents: "none" }}
         >
           {node.sublabel}
         </text>
@@ -614,7 +683,7 @@ export function AgentToolDiagram({
         <Box
           ref={viewportRef}
           sx={{
-            height: { xs: 320, sm: 380, md: 420 },
+            height: { xs: 360, sm: 440, md: 520 },
             width: "100%",
             touchAction: "none",
             cursor: "grab",
@@ -625,7 +694,7 @@ export function AgentToolDiagram({
           <Box
             component="svg"
             role="img"
-            aria-label="Scatter diagram of agents and the tools they called. Drag nodes to rearrange; scroll or use buttons to zoom."
+            aria-label="Radial diagram of agents and tools. Circle size reflects context size. Root agent is centered; drag nodes to rearrange; scroll or use buttons to zoom."
             width="100%"
             height="100%"
             sx={{ display: "block", fontFamily: theme.typography.fontFamily }}
@@ -671,26 +740,25 @@ export function AgentToolDiagram({
             </defs>
 
             <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
-              <text
-                x={WORLD_W * 0.22}
-                y={18}
-                textAnchor="middle"
-                fill={theme.palette.text.secondary}
-                fontSize={11}
-                letterSpacing="0.06em"
-              >
-                AGENTS
-              </text>
-              <text
-                x={WORLD_W * 0.78}
-                y={18}
-                textAnchor="middle"
-                fill={theme.palette.text.secondary}
-                fontSize={11}
-                letterSpacing="0.06em"
-              >
-                TOOLS
-              </text>
+              {/* Soft guide rings for the radial layout */}
+              <circle
+                cx={WORLD_W / 2}
+                cy={WORLD_H / 2}
+                r={SUBAGENT_RING}
+                fill="none"
+                stroke={alpha(theme.palette.divider, 0.55)}
+                strokeWidth={1}
+                strokeDasharray="4 6"
+              />
+              <circle
+                cx={WORLD_W / 2}
+                cy={WORLD_H / 2}
+                r={TOOL_RING}
+                fill="none"
+                stroke={alpha(theme.palette.divider, 0.4)}
+                strokeWidth={1}
+                strokeDasharray="2 8"
+              />
 
               {links.map((link) => {
                 const from = positions[link.agentId];
@@ -707,21 +775,21 @@ export function AgentToolDiagram({
                 const dx = to.x - from.x;
                 const dy = to.y - from.y;
                 const dist = Math.hypot(dx, dy) || 1;
-                const half = NODE_W / 2 - 2;
-                // Shorten endpoints so arrows meet the node edge
-                const sx = from.x + (dx / dist) * half;
-                const sy = from.y + (dy / dist) * (NODE_H / 2);
-                const ex = to.x - (dx / dist) * half;
-                const ey = to.y - (dy / dist) * (NODE_H / 2);
+                const fromR = (nodeRadiusById.get(link.agentId) ?? AGENT_R_MIN) - 1;
+                const toR = (nodeRadiusById.get(link.toolName) ?? TOOL_R_MIN) - 1;
+                // Shorten endpoints so arrows meet the circle edge
+                const sx = from.x + (dx / dist) * fromR;
+                const sy = from.y + (dy / dist) * fromR;
+                const ex = to.x - (dx / dist) * toR;
+                const ey = to.y - (dy / dist) * toR;
                 const midX = (sx + ex) / 2;
                 const midY = (sy + ey) / 2;
-                // Perpendicular bow for readable scatter flow
-                const bow = Math.min(48, dist * 0.18);
+                const bow = Math.min(56, dist * 0.16);
                 const nx = -dy / dist;
                 const ny = dx / dist;
-                const cx = midX + nx * bow;
-                const cy = midY + ny * bow;
-                const d = `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`;
+                const cpx = midX + nx * bow;
+                const cpy = midY + ny * bow;
+                const d = `M ${sx} ${sy} Q ${cpx} ${cpy} ${ex} ${ey}`;
                 return (
                   <g key={`${link.agentId}:${link.toolName}`}>
                     <path
@@ -771,7 +839,9 @@ export function AgentToolDiagram({
         {hiddenToolCount > 0
           ? ` · top ${MAX_TOOLS} tools (+${hiddenToolCount} more)`
           : ""}
-        {" · "}drag nodes to rearrange · scroll or +/− to zoom · click to focus
+        {" · "}circle size = context
+        {" · "}root centered · drag to rearrange · scroll or +/− to zoom · click
+        to focus
       </Typography>
     </Box>
   );
