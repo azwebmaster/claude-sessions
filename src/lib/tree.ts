@@ -77,3 +77,63 @@ export function findToolCallNodeId(
   }
   return null;
 }
+
+/**
+ * First tool_call node id whose `toolName` matches.
+ * When `agentId` is set, search only that agent's own turns — nested
+ * subagent trees are skipped so parent agents are not attributed child tools.
+ */
+export function findFirstToolCallByName(
+  root: TreeNode,
+  toolName: string,
+  agentId?: string | null,
+): string | null {
+  if (agentId != null && agentId !== "") {
+    const scope = findAgentSubtree(root, agentId);
+    if (!scope) return null;
+    return findFirstToolCallByNameIn(scope, toolName, true);
+  }
+  return findFirstToolCallByNameIn(root, toolName, false);
+}
+
+function findAgentSubtree(
+  root: TreeNode,
+  agentId: string,
+): TreeNode | null {
+  if (
+    (root.kind === "root_agent" || root.kind === "subagent") &&
+    (root.agentId === agentId || root.id === agentId)
+  ) {
+    return root;
+  }
+  for (const child of root.children) {
+    const found = findAgentSubtree(child, agentId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findFirstToolCallByNameIn(
+  root: TreeNode,
+  toolName: string,
+  skipNestedAgents: boolean,
+): string | null {
+  if (root.kind === "tool_call" && root.toolName === toolName) {
+    return root.id;
+  }
+  for (const child of root.children) {
+    if (
+      skipNestedAgents &&
+      (child.kind === "subagent" || child.kind === "root_agent")
+    ) {
+      continue;
+    }
+    const found = findFirstToolCallByNameIn(
+      child,
+      toolName,
+      skipNestedAgents,
+    );
+    if (found) return found;
+  }
+  return null;
+}
