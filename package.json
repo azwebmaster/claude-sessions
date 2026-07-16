@@ -4,12 +4,20 @@
   "private": true,
   "type": "module",
   "description": "Visualize, profile, and optimize Claude Code sessions",
+  "bin": {
+    "claude-sessions": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "fixtures"
+  ],
   "scripts": {
-    "dev": "tsx watch server/index.ts",
+    "dev": "tsx watch cli/index.ts serve",
     "dev:client": "vite",
     "dev:app": "pnpm dev & pnpm dev:client",
     "build": "tsc -p tsconfig.server.json --noEmit && vite build && tsc -p tsconfig.server.json",
-    "start": "node dist/server/index.js",
+    "serve": "node dist/cli/index.js serve",
+    "start": "node dist/cli/index.js serve",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "tsx --test server/parser.test.ts"
   },

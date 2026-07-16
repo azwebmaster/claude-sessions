@@ -29,23 +29,50 @@ Or run both:
 pnpm dev:app
 ```
 
-Production:
+## CLI
+
+This package exposes a `claude-sessions` binary. Start the HTTP server with `serve`:
 
 ```bash
 pnpm build
+NODE_ENV=production node dist/cli/index.js serve
+# equivalent:
+NODE_ENV=production pnpm serve
 NODE_ENV=production pnpm start
+```
+
+When installed as a dependency (or linked globally), the same command is available as:
+
+```bash
+claude-sessions serve
+```
+
+Options:
+
+```bash
+claude-sessions serve --port 3000
+claude-sessions serve -H 0.0.0.0 -p 8787
+claude-sessions --help
+```
+
+Port can also be set with `$PORT`. During development you can run the CLI via tsx without building:
+
+```bash
+pnpm exec tsx cli/index.ts serve
+pnpm exec tsx cli/index.ts serve --port 3000
 ```
 
 ## Scripts
 
 | Script | Description |
 | --- | --- |
-| `pnpm dev` | Watch the Hono API server |
+| `pnpm dev` | Watch the CLI `serve` command (Hono API) |
 | `pnpm dev:client` | Vite React client |
 | `pnpm dev:app` | API + client together |
+| `pnpm serve` / `pnpm start` | Run `claude-sessions serve` from the build |
 | `pnpm test` | Parser unit tests |
 | `pnpm typecheck` | TypeScript checks |
-| `pnpm build` | Build client + compile server |
+| `pnpm build` | Build client + compile CLI/server |
 
 ## Session format
 
