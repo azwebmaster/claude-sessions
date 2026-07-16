@@ -36,7 +36,13 @@ import { SessionAnalysisPanel } from "../components/SessionAnalysisPanel";
 import { SectionPaper, StatCard } from "../components/ui";
 import { layout, motion } from "../theme";
 
-type DetailTab = "analysis" | "context" | "diagram" | "hierarchy";
+type DetailTab =
+  | "analysis"
+  | "context"
+  | "diagram"
+  | "hierarchy"
+  | "agents"
+  | "tool-impact";
 type ContextDetailTab = "turn" | "loaded";
 
 const DETAIL_TABS: { id: DetailTab; label: string }[] = [
@@ -44,6 +50,8 @@ const DETAIL_TABS: { id: DetailTab; label: string }[] = [
   { id: "context", label: "Context" },
   { id: "diagram", label: "Diagram" },
   { id: "hierarchy", label: "Hierarchy" },
+  { id: "agents", label: "Agents" },
+  { id: "tool-impact", label: "Tool impact" },
 ];
 
 function TabPanel({
@@ -481,71 +489,61 @@ export function SessionDetailPage() {
       </TabPanel>
 
       <TabPanel id="hierarchy" active={activeTab === "hierarchy"}>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", lg: "1.15fr 0.85fr" },
-            gap: layout.sectionGap,
-            minWidth: 0,
-            alignItems: "start",
-          }}
+        <SectionPaper
+          title="Agent & tool hierarchy"
+          description={`Root agent → tool calls → results / subagents. Click a node to highlight it; use the chevron to expand or collapse; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
+          sx={{ animation: motion.riseMedium }}
         >
-          <SectionPaper
-            title="Agent & tool hierarchy"
-            description={`Root agent → tool calls → results / subagents. Click a node to highlight it; use the chevron to expand or collapse; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 0.5,
+              minWidth: 0,
+            }}
           >
-            <Box
-              sx={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 0.5,
-                maxHeight: { xs: "55vh", sm: "65vh", md: "70vh" },
-                overflow: "auto",
-                overscrollBehavior: "contain",
-                WebkitOverflowScrolling: "touch",
-                pr: 0.5,
-                minWidth: 0,
+            <HierarchyTree
+              node={detail.tree}
+              defaultOpen
+              focusedNodeId={focusedNodeId}
+              forceOpenIds={forceOpenIds}
+              onFocusNode={(nodeId) => {
+                setFocusedNodeId(nodeId);
               }}
-            >
-              <HierarchyTree
-                node={detail.tree}
-                defaultOpen
-                focusedNodeId={focusedNodeId}
-                forceOpenIds={forceOpenIds}
-                onFocusNode={(nodeId) => {
-                  setFocusedNodeId(nodeId);
-                }}
-                onViewLog={(node) => {
-                  if (node.log) openLogModal(node.log);
-                }}
-              />
-            </Box>
-          </SectionPaper>
+              onViewLog={(node) => {
+                if (node.log) openLogModal(node.log);
+              }}
+            />
+          </Box>
+        </SectionPaper>
+      </TabPanel>
 
-          <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
-            <SectionPaper
-              title="Agents"
-              description="Usage diagram per agent: peak context size and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the hierarchy. Selecting a tool call highlights the agent that ran it."
-            >
-              <AgentBreakdown
-                rows={detail.agentBreakdown}
-                selectedAgentId={selectedAgentId}
-                onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
-              />
-            </SectionPaper>
+      <TabPanel id="agents" active={activeTab === "agents"}>
+        <SectionPaper
+          title="Agents"
+          description="Usage diagram per agent: peak context size and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the Hierarchy tab. Selecting a tool call highlights the agent that ran it."
+          sx={{ animation: motion.riseMedium }}
+        >
+          <AgentBreakdown
+            rows={detail.agentBreakdown}
+            selectedAgentId={selectedAgentId}
+            onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
+          />
+        </SectionPaper>
+      </TabPanel>
 
-            <SectionPaper
-              title="Tool impact on context"
-              description="Tools ranked by attributed context growth. Click a tool or call to highlight it in the hierarchy and the agent that ran it."
-            >
-              <ToolImpactList
-                rows={detail.toolImpact}
-                focusedToolUseId={focusedToolUseId}
-                onSelectCall={focusToolCall}
-              />
-            </SectionPaper>
-          </Stack>
-        </Box>
+      <TabPanel id="tool-impact" active={activeTab === "tool-impact"}>
+        <SectionPaper
+          title="Tool impact on context"
+          description="Tools ranked by attributed context growth. Click a tool or call to highlight it in the Hierarchy tab and the agent that ran it."
+          sx={{ animation: motion.riseMedium }}
+        >
+          <ToolImpactList
+            rows={detail.toolImpact}
+            focusedToolUseId={focusedToolUseId}
+            onSelectCall={focusToolCall}
+          />
+        </SectionPaper>
       </TabPanel>
 
       <LogLinePanel

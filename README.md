@@ -10,7 +10,9 @@ TypeScript web app (React + pnpm + ESM) that reads local [Claude Code](https://c
     - **Analysis** — Agent SDK optimization report via [`@anthropic-ai/claude-agent-sdk`](https://code.claude.com/docs/en/agent-sdk) (`getSessionInfo` / `getSessionMessages` + structured `query`)
     - **Context** — context timeline across turns; nested tabs for turn token composition and loaded context (system prompt, CLAUDE.md / instructions, memory, MCPs, skills, deferred tools, files, conversation)
     - **Diagram** — interactive radial agent ↔ tool view (root centered; each tool node scoped to its calling agent; agent label = peak context or total tokens; circle size tracks the number shown on a shared agent/tool scale; tool label = attributed growth; link weight = call volume; expand to show all tools; zoom, pan, drag to rearrange; Arrange to auto-layout)
-    - **Hierarchy** — root agent → assistant turns → tool calls → results → nested subagents, plus per-agent usage and tool impact ranked by attributed context growth
+    - **Hierarchy** — root agent → assistant turns → tool calls → results → nested subagents
+    - **Agents** — per-agent usage (peak context, tool-call volume, tools used)
+    - **Tool impact** — tools ranked by attributed context growth
 
 Demo fixtures under `fixtures/projects` are always included so the UI works without local Claude Code history.
 
