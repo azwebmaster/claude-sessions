@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
-import { Box, Chip, Collapse, Typography } from "@mui/material";
+import { Box, Button, Chip, Collapse, Typography } from "@mui/material";
 import type { TokenUsage, TreeNode } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { kindLabel } from "../lib/api";
@@ -14,6 +14,7 @@ interface Props {
   focusedNodeId?: string | null;
   forceOpenIds?: ReadonlySet<string>;
   onFocusNode?: (nodeId: string) => void;
+  onViewLog?: (node: TreeNode) => void;
 }
 
 function usageParts(u: TokenUsage): string | null {
@@ -54,6 +55,7 @@ export function HierarchyTree({
   focusedNodeId = null,
   forceOpenIds,
   onFocusNode,
+  onViewLog,
 }: Props) {
   const theme = useTheme();
   const hasChildren = node.children.length > 0;
@@ -224,6 +226,28 @@ export function HierarchyTree({
         }
         sx={{ "&:hover": { bgcolor: "transparent" } }}
       />
+      {isFocused && node.log && onViewLog ? (
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "flex-start",
+            pl: hasChildren ? { xs: 4.25, sm: 4.75 } : { xs: 1, sm: 1.25 },
+            pr: { xs: 0.5, sm: 0.75 },
+            pb: 0.75,
+          }}
+        >
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              onViewLog(node);
+            }}
+            sx={{ fontSize: "0.72rem", py: 0.15, px: 1 }}
+          >
+            View transcript line
+          </Button>
+        </Box>
+      ) : null}
       <Collapse in={open && hasChildren}>
         <Box
           sx={{
@@ -247,6 +271,7 @@ export function HierarchyTree({
               focusedNodeId={focusedNodeId}
               forceOpenIds={forceOpenIds}
               onFocusNode={onFocusNode}
+              onViewLog={onViewLog}
             />
           ))}
         </Box>
