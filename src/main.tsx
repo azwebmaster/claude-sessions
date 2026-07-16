@@ -7,8 +7,8 @@ import { theme } from "./theme";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    <ThemeProvider theme={theme} defaultMode="system">
+      <CssBaseline enableColorScheme />
       <BrowserRouter>
         <App />
       </BrowserRouter>

@@ -1,20 +1,19 @@
 import { Box, Stack, Typography } from "@mui/material";
 import { Route, Routes } from "react-router-dom";
+import { ColorModeToggle } from "./components/ui";
 import { SessionListPage } from "./pages/SessionListPage";
 import { SessionDetailPage } from "./pages/SessionDetailPage";
+import { keyframes, layout, motion } from "./theme";
 
 export function App() {
   return (
     <Box
       sx={{
-        width: "min(1280px, calc(100% - 2rem))",
+        width: `min(${layout.maxWidth}px, calc(100% - ${layout.pagePaddingX}rem))`,
         mx: "auto",
-        py: 3,
+        py: layout.pagePaddingY,
         pb: 6,
-        "@keyframes rise": {
-          from: { opacity: 0, transform: "translateY(10px)" },
-          to: { opacity: 1, transform: "translateY(0)" },
-        },
+        ...keyframes,
       }}
     >
       <Stack
@@ -24,7 +23,7 @@ export function App() {
           alignItems: "center",
           justifyContent: "space-between",
           mb: 3,
-          animation: "rise 500ms ease both",
+          animation: motion.rise,
         }}
       >
         <Stack spacing={0.25}>
@@ -44,19 +43,22 @@ export function App() {
             Visualize · profile · optimize local Claude Code runs
           </Typography>
         </Stack>
-        <Typography
-          color="text.secondary"
-          sx={{
-            fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-            fontSize: "0.75rem",
-            textAlign: "right",
-            display: { xs: "none", sm: "block" },
-          }}
-        >
-          reads ~/.claude/projects
-          <br />
-          + fixtures
-        </Typography>
+        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+          <Typography
+            variant="mono"
+            color="text.secondary"
+            sx={{
+              fontSize: "0.75rem",
+              textAlign: "right",
+              display: { xs: "none", sm: "block" },
+            }}
+          >
+            reads ~/.claude/projects
+            <br />
+            + fixtures
+          </Typography>
+          <ColorModeToggle />
+        </Stack>
       </Stack>
       <Routes>
         <Route path="/" element={<SessionListPage />} />

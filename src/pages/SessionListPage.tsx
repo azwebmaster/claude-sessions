@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Alert,
   Box,
   Chip,
-  Paper,
+  CircularProgress,
   Stack,
   Table,
   TableBody,
@@ -15,15 +16,15 @@ import {
 } from "@mui/material";
 import type { SessionListItem } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
+import { EmptyState, SectionPaper } from "../components/ui";
 import { api, formatDate } from "../lib/api";
+import { motion } from "../theme";
 
 interface SessionsResponse {
   sessions: SessionListItem[];
   roots: string[];
   count: number;
 }
-
-const mono = '"IBM Plex Mono", ui-monospace, monospace';
 
 export function SessionListPage() {
   const navigate = useNavigate();
@@ -65,25 +66,26 @@ export function SessionListPage() {
 
   if (error) {
     return (
-      <Paper sx={{ p: 2.5 }}>
-        <Typography color="error">Failed to load sessions: {error}</Typography>
-      </Paper>
+      <SectionPaper>
+        <Alert severity="error">Failed to load sessions: {error}</Alert>
+      </SectionPaper>
     );
   }
 
   if (!data) {
     return (
-      <Paper sx={{ p: 2.5 }}>
-        <Typography color="text.secondary" align="center">
+      <SectionPaper>
+        <CircularProgress size={28} sx={{ display: "block", mx: "auto" }} />
+        <Typography color="text.secondary" align="center" sx={{ mt: 1.5 }}>
           Scanning session files…
         </Typography>
-      </Paper>
+      </SectionPaper>
     );
   }
 
   return (
-    <Box sx={{ animation: "rise 600ms ease both" }}>
-      <Paper sx={{ p: 2.5 }}>
+    <Box sx={{ animation: motion.riseSlow }}>
+      <SectionPaper>
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}
@@ -114,13 +116,13 @@ export function SessionListPage() {
         </Stack>
 
         {filtered.length === 0 ? (
-          <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
+          <EmptyState sx={{ py: 4 }}>
             No sessions matched. Claude Code stores transcripts under{" "}
-            <Box component="span" sx={{ fontFamily: mono }}>
+            <Typography component="span" variant="mono" sx={{ fontSize: "inherit" }}>
               ~/.claude/projects
-            </Box>
+            </Typography>
             . Demo fixtures are included so you can explore the UI immediately.
-          </Typography>
+          </EmptyState>
         ) : (
           <Table>
             <TableHead>
@@ -142,17 +144,8 @@ export function SessionListPage() {
                   onClick={() => navigate(`/sessions/${s.id}`)}
                 >
                   <TableCell>
-                    <Typography sx={{ fontWeight: 600, letterSpacing: "-0.01em" }}>
-                      {s.summary ?? "Untitled session"}
-                    </Typography>
-                    <Typography
-                      sx={{
-                        mt: 0.25,
-                        fontFamily: mono,
-                        fontSize: "0.75rem",
-                        color: "text.secondary",
-                      }}
-                    >
+                    <Typography variant="subtitle2">{s.summary ?? "Untitled session"}</Typography>
+                    <Typography variant="mono" color="text.secondary" sx={{ mt: 0.25, fontSize: "0.75rem" }}>
                       {s.projectPath}
                     </Typography>
                     <Stack
@@ -179,27 +172,37 @@ export function SessionListPage() {
                       ) : null}
                     </Stack>
                   </TableCell>
-                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
-                    {formatDate(s.updatedAt)}
+                  <TableCell>
+                    <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                      {formatDate(s.updatedAt)}
+                    </Typography>
                   </TableCell>
-                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
-                    {formatTokens(totalTokens(s.usage))}
+                  <TableCell>
+                    <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                      {formatTokens(totalTokens(s.usage))}
+                    </Typography>
                   </TableCell>
-                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
-                    {formatTokens(s.peakContextTokens)}
+                  <TableCell>
+                    <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                      {formatTokens(s.peakContextTokens)}
+                    </Typography>
                   </TableCell>
-                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
-                    {s.toolCallCount}
+                  <TableCell>
+                    <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                      {s.toolCallCount}
+                    </Typography>
                   </TableCell>
-                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
-                    {1 + s.subagentCount}
+                  <TableCell>
+                    <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                      {1 + s.subagentCount}
+                    </Typography>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-      </Paper>
+      </SectionPaper>
     </Box>
   );
 }

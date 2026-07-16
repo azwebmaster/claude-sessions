@@ -1,31 +1,21 @@
 import { useEffect, useRef, useState } from "react";
+import { alpha, useTheme } from "@mui/material/styles";
 import { Box, Chip, Collapse, Typography } from "@mui/material";
-import type { TokenUsage, TreeNode, TreeNodeKind } from "@shared/types";
+import type { TokenUsage, TreeNode } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { kindLabel } from "../lib/api";
+import { focusHighlight, nodeKindStyle } from "../theme";
+import { ExpandableRow } from "./ui";
 
 interface Props {
   node: TreeNode;
   depth?: number;
   defaultOpen?: boolean;
   focusedNodeId?: string | null;
-  /** Node ids that must stay expanded to reveal the focused node */
   forceOpenIds?: ReadonlySet<string>;
   onFocusNode?: (nodeId: string) => void;
 }
 
-const kindColors: Record<TreeNodeKind, { bg: string; color: string }> = {
-  root_agent: { bg: "rgba(25, 118, 210, 0.12)", color: "#1565c0" },
-  subagent: { bg: "rgba(156, 39, 176, 0.12)", color: "#7b1fa2" },
-  tool_call: { bg: "rgba(2, 136, 209, 0.12)", color: "#0277bd" },
-  tool_result: { bg: "rgba(237, 108, 2, 0.12)", color: "#ef6c00" },
-  assistant_message: { bg: "rgba(25, 118, 210, 0.12)", color: "#1976d2" },
-  user_message: { bg: "rgba(0, 0, 0, 0.06)", color: "#616161" },
-  thinking: { bg: "rgba(0, 0, 0, 0.06)", color: "#616161" },
-  system: { bg: "rgba(0, 0, 0, 0.06)", color: "#616161" },
-};
-
-/** Compact in / cache / out parts that make up an assistant usage chip. */
 function usageParts(u: TokenUsage): string | null {
   const parts: string[] = [];
   if (u.inputTokens > 0) parts.push(`in ${formatTokens(u.inputTokens)}`);
@@ -65,6 +55,7 @@ export function HierarchyTree({
   forceOpenIds,
   onFocusNode,
 }: Props) {
+  const theme = useTheme();
   const hasChildren = node.children.length > 0;
   const isFocused = focusedNodeId === node.id;
   const mustOpen = Boolean(forceOpenIds?.has(node.id));
@@ -112,7 +103,8 @@ export function HierarchyTree({
         ? `↑${formatTokens(delta)} vs prior`
         : `↓${formatTokens(Math.abs(delta))} vs prior`;
 
-  const kindStyle = kindColors[node.kind] ?? kindColors.system;
+  const kindStyle = nodeKindStyle(theme, node.kind);
+  const highlight = focusHighlight(theme);
   const title = metricsTitle(node);
 
   return (
@@ -121,114 +113,98 @@ export function HierarchyTree({
       data-node-id={node.id}
       sx={{
         border: isFocused ? "1px solid" : "1px solid transparent",
-        borderColor: isFocused ? "warning.main" : "transparent",
+        borderColor: isFocused ? highlight.borderColor : "transparent",
         borderRadius: 1,
         bgcolor: isFocused
-          ? "rgba(237, 108, 2, 0.12)"
+          ? highlight.bgcolor
           : open
             ? "action.selected"
             : "transparent",
-        boxShadow: isFocused ? "inset 3px 0 0 #ef6c00" : "none",
+        boxShadow: isFocused ? highlight.boxShadow : "none",
         transition: "border-color 150ms ease, background 150ms ease, box-shadow 150ms ease",
         "&:hover": {
-          borderColor: isFocused ? "warning.main" : "divider",
-          bgcolor: isFocused ? "rgba(237, 108, 2, 0.14)" : "action.hover",
+          borderColor: isFocused ? highlight.borderColor : "divider",
+          bgcolor: isFocused
+            ? alpha(theme.palette.warning.main, 0.14)
+            : "action.hover",
         },
       }}
     >
-      <Box
-        component="button"
-        type="button"
-        onClick={() => {
+      <ExpandableRow
+        expanded={hasChildren ? open : undefined}
+        focused={isFocused}
+        onActivate={() => {
           onFocusNode?.(node.id);
           if (hasChildren) setOpen((v) => !v);
         }}
-        aria-expanded={hasChildren ? open : undefined}
-        aria-current={isFocused ? "true" : undefined}
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "auto 1fr auto",
-          gap: 1,
-          alignItems: "start",
-          width: "100%",
-          border: 0,
-          bgcolor: "transparent",
-          textAlign: "left",
-          px: 1.25,
-          py: 1,
-          cursor: "pointer",
-          color: "inherit",
-          font: "inherit",
-        }}
-      >
-        <Chip
-          size="small"
-          label={kindLabel(node.kind)}
-          sx={{
-            height: 22,
-            fontSize: "0.65rem",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-            bgcolor: kindStyle.bg,
-            color: kindStyle.color,
-            borderRadius: 0.75,
-            "& .MuiChip-label": { px: 0.75 },
-          }}
-        />
-        <Box>
-          <Typography sx={{ fontWeight: 600, fontSize: "0.9rem" }}>
-            {hasChildren ? (open ? "▾ " : "▸ ") : ""}
-            {node.label}
-          </Typography>
-          {node.preview ? (
-            <Typography
-              sx={{
-                mt: 0.25,
-                color: "text.secondary",
-                fontSize: "0.78rem",
-                lineHeight: 1.35,
-              }}
-            >
-              {node.preview}
+        leading={
+          <Chip
+            size="small"
+            label={kindLabel(node.kind)}
+            sx={{
+              height: 22,
+              fontSize: "0.65rem",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+              bgcolor: kindStyle.bg,
+              color: kindStyle.color,
+              borderRadius: 0.75,
+              "& .MuiChip-label": { px: 0.75 },
+            }}
+          />
+        }
+        body={
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontSize: "0.9rem" }}>
+              {hasChildren ? (open ? "▾ " : "▸ ") : ""}
+              {node.label}
             </Typography>
-          ) : null}
-        </Box>
-        <Box
-          title={title}
-          sx={{
-            fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-            fontSize: "0.72rem",
-            color: "text.secondary",
-            textAlign: "right",
-            whiteSpace: "nowrap",
-            maxWidth: { xs: "9.5rem", sm: "14rem" },
-          }}
-        >
-          {usageLabel ? <div>{usageLabel}</div> : null}
-          {breakdownLabel ? (
-            <Box
-              component="div"
-              sx={{
-                color: "text.disabled",
-                fontSize: "0.65rem",
-                whiteSpace: "normal",
-                lineHeight: 1.3,
-              }}
-            >
-              {breakdownLabel}
-            </Box>
-          ) : null}
-          {contextLabel ? <div>{contextLabel}</div> : null}
-          {deltaLabel ? (
-            <Box
-              component="div"
-              sx={{ color: delta && delta > 0 ? "error.main" : "success.main" }}
-            >
-              {deltaLabel}
-            </Box>
-          ) : null}
-        </Box>
-      </Box>
+            {node.preview ? (
+              <Typography color="text.secondary" sx={{ mt: 0.25, fontSize: "0.78rem", lineHeight: 1.35 }}>
+                {node.preview}
+              </Typography>
+            ) : null}
+          </Box>
+        }
+        trailing={
+          <Box
+            title={title}
+            sx={{
+              fontFamily: theme.typography.mono?.fontFamily,
+              fontSize: "0.72rem",
+              color: "text.secondary",
+              textAlign: "right",
+              whiteSpace: "nowrap",
+              maxWidth: { xs: "9.5rem", sm: "14rem" },
+            }}
+          >
+            {usageLabel ? <div>{usageLabel}</div> : null}
+            {breakdownLabel ? (
+              <Box
+                component="div"
+                sx={{
+                  color: "text.disabled",
+                  fontSize: "0.65rem",
+                  whiteSpace: "normal",
+                  lineHeight: 1.3,
+                }}
+              >
+                {breakdownLabel}
+              </Box>
+            ) : null}
+            {contextLabel ? <div>{contextLabel}</div> : null}
+            {deltaLabel ? (
+              <Box
+                component="div"
+                sx={{ color: delta && delta > 0 ? "error.main" : "success.main" }}
+              >
+                {deltaLabel}
+              </Box>
+            ) : null}
+          </Box>
+        }
+        sx={{ "&:hover": { bgcolor: "transparent" } }}
+      />
       <Collapse in={open && hasChildren}>
         <Box
           sx={{

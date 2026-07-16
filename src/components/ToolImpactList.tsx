@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { alpha, useTheme } from "@mui/material/styles";
 import {
   Box,
   Chip,
@@ -10,12 +11,12 @@ import {
 import type { ToolImpactCall, ToolImpactRow } from "@shared/types";
 import { formatTokens } from "@shared/types";
 import { formatDate, shortId } from "../lib/api";
+import { alertSurface } from "../theme";
+import { EmptyState, ExpandableRow } from "./ui";
 
 interface Props {
   rows: ToolImpactRow[];
 }
-
-const mono = '"IBM Plex Mono", ui-monospace, monospace';
 
 function sharePercent(value: number, total: number): number {
   if (total <= 0) return 0;
@@ -50,13 +51,7 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
     >
       <Box sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 0.25 }}>
-          <Typography
-            sx={{
-              fontFamily: mono,
-              fontSize: "0.72rem",
-              color: "text.secondary",
-            }}
-          >
+          <Typography variant="mono" color="text.secondary" sx={{ fontSize: "0.72rem" }}>
             {shortId(call.toolUseId)}
           </Typography>
           {call.isError ? (
@@ -69,63 +64,33 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
             />
           ) : null}
         </Stack>
-        <Typography
-          sx={{
-            fontWeight: 600,
-            fontSize: "0.85rem",
-            wordBreak: "break-word",
-          }}
-        >
+        <Typography variant="subtitle2" sx={{ fontSize: "0.85rem", wordBreak: "break-word" }}>
           {headline ?? "No input captured"}
         </Typography>
         {supporting ? (
-          <Typography
-            sx={{
-              mt: 0.35,
-              color: "text.secondary",
-              fontSize: "0.78rem",
-              lineHeight: 1.35,
-              wordBreak: "break-word",
-            }}
-          >
+          <Typography color="text.secondary" sx={{ mt: 0.35, fontSize: "0.78rem", lineHeight: 1.35, wordBreak: "break-word" }}>
             {supporting}
           </Typography>
         ) : (
-          <Typography
-            sx={{
-              mt: 0.35,
-              color: "text.secondary",
-              fontSize: "0.78rem",
-              fontStyle: "italic",
-            }}
-          >
+          <Typography color="text.secondary" sx={{ mt: 0.35, fontSize: "0.78rem", fontStyle: "italic" }}>
             No result text captured for this call.
           </Typography>
         )}
         {call.timestamp ? (
-          <Typography
-            sx={{
-              mt: 0.5,
-              color: "text.secondary",
-              fontFamily: mono,
-              fontSize: "0.68rem",
-            }}
-          >
+          <Typography variant="mono" color="text.secondary" sx={{ mt: 0.5, fontSize: "0.68rem" }}>
             {formatDate(call.timestamp)}
           </Typography>
         ) : null}
       </Box>
-      <Box sx={{ fontFamily: mono, textAlign: "right", whiteSpace: "nowrap" }}>
-        <Typography sx={{ fontFamily: "inherit", fontSize: "0.85rem" }}>
+      <Box sx={{ textAlign: "right", whiteSpace: "nowrap" }}>
+        <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
           {formatTokens(call.resultTokens)}
         </Typography>
-        <Typography sx={{ color: "text.secondary", fontSize: "0.68rem" }}>
+        <Typography variant="caption" color="text.secondary">
           result
         </Typography>
         {call.contextGrowthAttributed > 0 ? (
-          <Typography
-            sx={{ color: "error.main", fontSize: "0.72rem", mt: 0.5 }}
-          >
+          <Typography color="error.main" sx={{ fontSize: "0.72rem", mt: 0.5 }}>
             +{formatTokens(call.contextGrowthAttributed)} ctx
           </Typography>
         ) : null}
@@ -138,14 +103,7 @@ function TopCallPreview({ calls }: { calls: ToolImpactCall[] }) {
   const top = calls.slice(0, 3);
   if (top.length === 0) {
     return (
-      <Typography
-        sx={{
-          mt: 0.5,
-          color: "text.secondary",
-          fontSize: "0.75rem",
-          fontStyle: "italic",
-        }}
-      >
+      <Typography color="text.secondary" sx={{ mt: 0.5, fontSize: "0.75rem", fontStyle: "italic" }}>
         No per-call details available
       </Typography>
     );
@@ -154,15 +112,7 @@ function TopCallPreview({ calls }: { calls: ToolImpactCall[] }) {
   return (
     <Stack spacing={0.35} sx={{ mt: 0.65 }}>
       {top.map((call) => (
-        <Typography
-          key={call.toolUseId}
-          sx={{
-            color: "text.secondary",
-            fontSize: "0.75rem",
-            lineHeight: 1.35,
-            wordBreak: "break-word",
-          }}
-        >
+        <Typography key={call.toolUseId} color="text.secondary" sx={{ fontSize: "0.75rem", lineHeight: 1.35, wordBreak: "break-word" }}>
           <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
             {formatTokens(call.resultTokens)}
           </Box>
@@ -171,9 +121,7 @@ function TopCallPreview({ calls }: { calls: ToolImpactCall[] }) {
         </Typography>
       ))}
       {calls.length > top.length ? (
-        <Typography
-          sx={{ color: "text.secondary", fontSize: "0.72rem", fontFamily: mono }}
-        >
+        <Typography variant="mono" color="text.secondary" sx={{ fontSize: "0.72rem" }}>
           +{calls.length - top.length} more call
           {calls.length - top.length === 1 ? "" : "s"}
         </Typography>
@@ -183,6 +131,7 @@ function TopCallPreview({ calls }: { calls: ToolImpactCall[] }) {
 }
 
 export function ToolImpactList({ rows }: Props) {
+  const theme = useTheme();
   const [selected, setSelected] = useState<string | null>(
     rows[0]?.toolName ?? null,
   );
@@ -192,11 +141,7 @@ export function ToolImpactList({ rows }: Props) {
   }, [rows]);
 
   if (rows.length === 0) {
-    return (
-      <Typography color="text.secondary" align="center" sx={{ py: 2 }}>
-        No tool calls recorded.
-      </Typography>
-    );
+    return <EmptyState>No tool calls recorded.</EmptyState>;
   }
 
   const totalGrowth = rows.reduce(
@@ -211,6 +156,7 @@ export function ToolImpactList({ rows }: Props) {
   );
   const top = rows[0];
   const topShare = sharePercent(top.contextGrowthAttributed, totalGrowth);
+  const errorSurface = alertSurface(theme, "error");
 
   return (
     <Stack spacing={1.25}>
@@ -220,34 +166,19 @@ export function ToolImpactList({ rows }: Props) {
             px: 1.25,
             py: 1,
             borderRadius: 1,
-            bgcolor: "rgba(211, 47, 47, 0.06)",
             border: 1,
-            borderColor: "rgba(211, 47, 47, 0.18)",
+            ...errorSurface,
           }}
         >
-          <Typography sx={{ fontWeight: 600, fontSize: "0.9rem" }}>
+          <Typography variant="subtitle2" sx={{ fontSize: "0.9rem" }}>
             {top.toolName} adds the most context
           </Typography>
-          <Typography
-            sx={{
-              mt: 0.25,
-              color: "text.secondary",
-              fontSize: "0.78rem",
-              fontFamily: mono,
-            }}
-          >
+          <Typography variant="mono" color="text.secondary" sx={{ mt: 0.25, fontSize: "0.78rem" }}>
             +{formatTokens(top.contextGrowthAttributed)} attributed
             {topShare > 0 ? ` · ${topShare}% of tool-driven growth` : ""}
           </Typography>
           {top.calls[0] ? (
-            <Typography
-              sx={{
-                mt: 0.5,
-                color: "text.primary",
-                fontSize: "0.8rem",
-                wordBreak: "break-word",
-              }}
-            >
+            <Typography sx={{ mt: 0.5, fontSize: "0.8rem", wordBreak: "break-word" }}>
               Heaviest call: {callHeadline(top.calls[0])}
             </Typography>
           ) : null}
@@ -285,131 +216,95 @@ export function ToolImpactList({ rows }: Props) {
               bgcolor: open
                 ? "action.selected"
                 : isTop
-                  ? "rgba(211, 47, 47, 0.04)"
+                  ? alpha(theme.palette.error.main, 0.04)
                   : "action.hover",
               transition: "border-color 150ms ease, background 150ms ease",
             }}
           >
-            <Box
-              component="button"
-              type="button"
-              onClick={() =>
+            <ExpandableRow
+              expanded={open}
+              onActivate={() =>
                 setSelected((cur) =>
                   cur === row.toolName ? null : row.toolName,
                 )
               }
-              aria-expanded={open}
-              sx={{
-                display: "grid",
-                gridTemplateColumns: "auto 1fr auto",
-                gap: 1,
-                width: "100%",
-                border: 0,
-                bgcolor: "transparent",
-                textAlign: "left",
-                px: 1.25,
-                py: 1,
-                cursor: "pointer",
-                color: "inherit",
-                font: "inherit",
-                borderRadius: 1,
-                "&:hover": { bgcolor: "action.hover" },
-              }}
-            >
-              <Chip
-                size="small"
-                label={`#${index + 1}`}
-                sx={{
-                  height: 22,
-                  fontFamily: mono,
-                  fontSize: "0.68rem",
-                  bgcolor: isTop
-                    ? "rgba(211, 47, 47, 0.12)"
-                    : "action.selected",
-                  color: isTop ? "error.dark" : "text.secondary",
-                  borderRadius: 0.75,
-                  "& .MuiChip-label": { px: 0.75 },
-                }}
-              />
-              <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ fontWeight: 600 }}>
-                  {open ? "▾ " : "▸ "}
-                  {row.toolName}
-                </Typography>
-                <Typography
+              leading={
+                <Chip
+                  size="small"
+                  label={`#${index + 1}`}
                   sx={{
-                    color: "text.secondary",
-                    fontFamily: mono,
-                    fontSize: "0.75rem",
-                  }}
-                >
-                  {row.callCount} calls · avg {formatTokens(row.avgResultTokens)} ·
-                  max {formatTokens(row.maxResultTokens)}
-                  {growthShare > 0 ? ` · ${growthShare}% growth` : ""}
-                </Typography>
-                <LinearProgress
-                  variant="determinate"
-                  color={isTop ? "error" : "primary"}
-                  value={barValue}
-                  sx={{
-                    mt: 0.75,
-                    height: 6,
-                    borderRadius: 1,
+                    height: 22,
+                    fontFamily: theme.typography.mono?.fontFamily,
+                    fontSize: "0.68rem",
+                    bgcolor: isTop
+                      ? alpha(theme.palette.error.main, 0.12)
+                      : "action.selected",
+                    color: isTop ? "error.dark" : "text.secondary",
+                    borderRadius: 0.75,
+                    "& .MuiChip-label": { px: 0.75 },
                   }}
                 />
-                {!open ? <TopCallPreview calls={calls} /> : null}
-              </Box>
-              <Box sx={{ fontFamily: mono, textAlign: "right" }}>
-                {row.contextGrowthAttributed > 0 ? (
-                  <>
-                    <Typography
-                      sx={{
-                        fontFamily: "inherit",
-                        color: isTop ? "error.main" : "primary.main",
-                        fontWeight: 600,
-                      }}
-                    >
-                      +{formatTokens(row.contextGrowthAttributed)}
-                    </Typography>
-                    <Typography
-                      sx={{ color: "text.secondary", fontSize: "0.72rem" }}
-                    >
-                      ctx growth
-                    </Typography>
-                    <Typography
-                      sx={{
-                        color: "text.secondary",
-                        fontSize: "0.68rem",
-                        mt: 0.35,
-                      }}
-                    >
-                      {formatTokens(row.totalResultTokens)} result
-                    </Typography>
-                  </>
-                ) : (
-                  <>
-                    <Typography sx={{ fontFamily: "inherit" }}>
-                      {formatTokens(row.totalResultTokens)}
-                    </Typography>
-                    <Typography
-                      sx={{ color: "text.secondary", fontSize: "0.72rem" }}
-                    >
-                      ≈ result size
-                    </Typography>
-                  </>
-                )}
-              </Box>
-            </Box>
+              }
+              body={
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="subtitle2">
+                    {open ? "▾ " : "▸ "}
+                    {row.toolName}
+                  </Typography>
+                  <Typography variant="mono" color="text.secondary" sx={{ fontSize: "0.75rem" }}>
+                    {row.callCount} calls · avg {formatTokens(row.avgResultTokens)} ·
+                    max {formatTokens(row.maxResultTokens)}
+                    {growthShare > 0 ? ` · ${growthShare}% growth` : ""}
+                  </Typography>
+                  <LinearProgress
+                    variant="determinate"
+                    color={isTop ? "error" : "primary"}
+                    value={barValue}
+                    sx={{ mt: 0.75, height: 6 }}
+                  />
+                  {!open ? <TopCallPreview calls={calls} /> : null}
+                </Box>
+              }
+              trailing={
+                <Box sx={{ textAlign: "right" }}>
+                  {row.contextGrowthAttributed > 0 ? (
+                    <>
+                      <Typography
+                        variant="mono"
+                        sx={{
+                          color: isTop ? "error.main" : "primary.main",
+                          fontWeight: 600,
+                        }}
+                      >
+                        +{formatTokens(row.contextGrowthAttributed)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ctx growth
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.35 }}>
+                        {formatTokens(row.totalResultTokens)} result
+                      </Typography>
+                    </>
+                  ) : (
+                    <>
+                      <Typography variant="mono">
+                        {formatTokens(row.totalResultTokens)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ≈ result size
+                      </Typography>
+                    </>
+                  )}
+                </Box>
+              }
+            />
 
             <Collapse in={open}>
               <Stack spacing={0.75} sx={{ px: 1.25, pb: 1.25, pt: 0.25 }}>
                 <Typography
-                  sx={{
-                    color: "text.secondary",
-                    fontSize: "0.72rem",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}
+                  variant="overline"
+                  color="text.secondary"
+                  sx={{ fontSize: "0.72rem", letterSpacing: "0.04em" }}
                 >
                   {calls.length} call
                   {calls.length === 1 ? "" : "s"} · heaviest first

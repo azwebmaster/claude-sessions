@@ -1,8 +1,6 @@
 import { Box, Typography } from "@mui/material";
 import type { LogLineRef } from "@shared/types";
 
-const mono = '"IBM Plex Mono", ui-monospace, monospace';
-
 interface Props {
   log: LogLineRef | null | undefined;
 }
@@ -60,40 +58,35 @@ export function LogLinePanel({ log }: Props) {
           gap: 0.35,
         }}
       >
-        <Typography sx={{ fontWeight: 650, fontSize: "0.85rem" }}>
+        <Typography variant="subtitle2" sx={{ fontSize: "0.85rem" }}>
           Transcript log line
         </Typography>
         <Typography
-          sx={{
-            fontFamily: mono,
-            fontSize: "0.72rem",
-            color: "text.secondary",
-            wordBreak: "break-all",
-            lineHeight: 1.35,
-          }}
+          variant="mono"
+          color="text.secondary"
+          sx={{ fontSize: "0.72rem", wordBreak: "break-all", lineHeight: 1.35 }}
           title={`${log.filePath}:${log.line}`}
         >
           {log.filePath}:{log.line}
         </Typography>
       </Box>
-      <Box
+      <Typography
         component="pre"
+        variant="mono"
         sx={{
           m: 0,
           px: 1.5,
           py: 1.25,
           maxHeight: 320,
           overflow: "auto",
-          fontFamily: mono,
           fontSize: "0.72rem",
           lineHeight: 1.45,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
-          color: "text.primary",
         }}
       >
         {pretty}
-      </Box>
+      </Typography>
     </Box>
   );
 }

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 import {
+  Alert,
   Box,
+  CircularProgress,
   Link,
-  Paper,
   Stack,
   Typography,
 } from "@mui/material";
@@ -21,44 +22,8 @@ import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
 import { TurnDetailPanel } from "../components/TurnDetailPanel";
 import { LogLinePanel } from "../components/LogLinePanel";
-
-const mono = '"IBM Plex Mono", ui-monospace, monospace';
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <Box
-      sx={{
-        bgcolor: "action.hover",
-        border: 1,
-        borderColor: "divider",
-        borderRadius: 1.5,
-        px: 1.5,
-        py: 1.25,
-      }}
-    >
-      <Typography
-        color="text.secondary"
-        sx={{
-          fontSize: "0.68rem",
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-        }}
-      >
-        {label}
-      </Typography>
-      <Typography
-        sx={{
-          mt: 0.25,
-          fontFamily: mono,
-          fontSize: "1.05rem",
-          fontWeight: 600,
-        }}
-      >
-        {value}
-      </Typography>
-    </Box>
-  );
-}
+import { SectionPaper, StatCard } from "../components/ui";
+import { layout, motion } from "../theme";
 
 export function SessionDetailPage() {
   const { id } = useParams();
@@ -76,7 +41,6 @@ export function SessionDetailPage() {
       .then((res) => {
         if (cancelled) return;
         setDetail(res);
-        // Default to first assistant turn so occupancy breakdown is visible.
         if (res.timeline[0]) setFocusedNodeId(res.timeline[0].nodeId);
       })
       .catch((err: Error) => {
@@ -132,9 +96,9 @@ export function SessionDetailPage() {
     return (
       <Box>
         {backLink}
-        <Paper sx={{ p: 2.5 }}>
-          <Typography color="error">Failed to load session: {error}</Typography>
-        </Paper>
+        <SectionPaper>
+          <Alert severity="error">Failed to load session: {error}</Alert>
+        </SectionPaper>
       </Box>
     );
   }
@@ -143,11 +107,12 @@ export function SessionDetailPage() {
     return (
       <Box>
         {backLink}
-        <Paper sx={{ p: 2.5 }}>
-          <Typography color="text.secondary" align="center">
+        <SectionPaper>
+          <CircularProgress size={28} sx={{ display: "block", mx: "auto" }} />
+          <Typography color="text.secondary" align="center" sx={{ mt: 1.5 }}>
             Building session profile…
           </Typography>
-        </Paper>
+        </SectionPaper>
       </Box>
     );
   }
@@ -160,11 +125,11 @@ export function SessionDetailPage() {
 
       <Stack
         direction={{ xs: "column", md: "row" }}
-        spacing={2}
+        spacing={layout.sectionGap}
         sx={{
           justifyContent: "space-between",
-          mb: 2,
-          animation: "rise 400ms ease both",
+          mb: layout.sectionGap,
+          animation: motion.rise,
         }}
       >
         <Box>
@@ -178,14 +143,7 @@ export function SessionDetailPage() {
           >
             {meta.summary ?? "Untitled session"}
           </Typography>
-          <Typography
-            color="text.secondary"
-            sx={{
-              mt: 0.5,
-              fontFamily: mono,
-              fontSize: "0.78rem",
-            }}
-          >
+          <Typography variant="mono" color="text.secondary" sx={{ mt: 0.5, fontSize: "0.78rem" }}>
             {meta.projectPath}
             {meta.gitBranch ? ` · ${meta.gitBranch}` : ""}
             {" · "}
@@ -193,11 +151,11 @@ export function SessionDetailPage() {
           </Typography>
           <Typography
             component="div"
+            variant="mono"
             color="text.secondary"
             title={meta.filePath}
             sx={{
               mt: 0.75,
-              fontFamily: mono,
               fontSize: "0.72rem",
               lineHeight: 1.4,
               wordBreak: "break-all",
@@ -228,31 +186,21 @@ export function SessionDetailPage() {
             gap: 0.75,
           }}
         >
-          <Stat label="Total tokens" value={formatTokens(totalTokens(meta.usage))} />
-          <Stat label="Peak context" value={formatTokens(meta.peakContextTokens)} />
-          <Stat
+          <StatCard label="Total tokens" value={formatTokens(totalTokens(meta.usage))} />
+          <StatCard label="Peak context" value={formatTokens(meta.peakContextTokens)} />
+          <StatCard
             label="Cache read"
             value={formatTokens(meta.usage.cacheReadInputTokens)}
           />
-          <Stat label="Tool calls" value={String(meta.toolCallCount)} />
+          <StatCard label="Tool calls" value={String(meta.toolCallCount)} />
         </Box>
       </Stack>
 
-      <Paper
-        sx={{
-          p: 2.5,
-          mb: 2,
-          animation: "rise 420ms ease both",
-        }}
+      <SectionPaper
+        title="Context growth"
+        description={`Context occupancy across assistant turns (${formatTokens(contextSize(meta.usage))} cumulative input+cache). Click a turn to jump the hierarchy to that moment.`}
+        sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
       >
-        <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
-          Context growth
-        </Typography>
-        <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-          Context occupancy across assistant turns (
-          {formatTokens(contextSize(meta.usage))} cumulative input+cache). Click
-          a turn to jump the hierarchy to that moment.
-        </Typography>
         <ContextChart
           points={detail.timeline}
           selectedNodeId={focusedNodeId}
@@ -262,30 +210,20 @@ export function SessionDetailPage() {
           <TurnDetailPanel point={focusedTurn} previous={previousTurn} />
         ) : null}
         <LogLinePanel log={focusedLog} />
-      </Paper>
+      </SectionPaper>
 
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: { xs: "1fr", md: "1.15fr 0.85fr" },
-          gap: 2,
-          animation: "rise 450ms ease both",
+          gap: layout.sectionGap,
+          animation: motion.rise,
         }}
       >
-        <Paper sx={{ p: 2.5 }}>
-          <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
-            Agent & tool hierarchy
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-            Root agent → tool calls → results / subagents. Click a node to
-            inspect its JSONL source line. Assistant chips show that turn&apos;s
-            API usage and window occupancy (ctx) — usually mostly cache/input
-            from the prompt, not a sum of child tools. Tool +N est chips are
-            estimated I/O sizes only.
-            {focusedNodeId
-              ? " Highlighted node matches the selected timeline turn."
-              : ""}
-          </Typography>
+        <SectionPaper
+          title="Agent & tool hierarchy"
+          description={`Root agent → tool calls → results / subagents. Click a node to inspect its JSONL source line. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn." : ""}`}
+        >
           <Box
             sx={{
               display: "flex",
@@ -304,26 +242,19 @@ export function SessionDetailPage() {
               onFocusNode={setFocusedNodeId}
             />
           </Box>
-        </Paper>
+        </SectionPaper>
 
-        <Stack spacing={2}>
-          <Paper sx={{ p: 2.5 }}>
-            <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
-              Agents
-            </Typography>
+        <Stack spacing={layout.sectionGap}>
+          <SectionPaper title="Agents">
             <AgentBreakdown rows={detail.agentBreakdown} />
-          </Paper>
+          </SectionPaper>
 
-          <Paper sx={{ p: 2.5 }}>
-            <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
-              Tool impact on context
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-              Tools ranked by attributed context growth. Each tool shows its
-              heaviest calls up front; expand for the full per-call list.
-            </Typography>
+          <SectionPaper
+            title="Tool impact on context"
+            description="Tools ranked by attributed context growth. Each tool shows its heaviest calls up front; expand for the full per-call list."
+          >
             <ToolImpactList rows={detail.toolImpact} />
-          </Paper>
+          </SectionPaper>
         </Stack>
       </Box>
     </Box>
