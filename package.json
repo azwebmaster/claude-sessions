@@ -19,7 +19,7 @@
     "serve": "node dist/cli/index.js serve",
     "start": "node dist/cli/index.js serve",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "tsx --test server/parser.test.ts server/analyze.test.ts server/analysisCache.test.ts server/runAnalyzeWithCache.test.ts shared/formatAnalysisPrompt.test.ts src/lib/tree.test.ts src/lib/sessionFilters.test.ts src/components/AgentToolDiagram.test.ts"
+    "test": "tsx --test server/parser.test.ts server/analyze.test.ts server/analysisCache.test.ts server/runAnalyzeWithCache.test.ts shared/formatAnalysisPrompt.test.ts src/lib/tree.test.ts src/lib/sessionFilters.test.ts src/lib/sessionSort.test.ts src/components/AgentToolDiagram.test.ts"
   },
   "engines": {
     "node": ">=20"

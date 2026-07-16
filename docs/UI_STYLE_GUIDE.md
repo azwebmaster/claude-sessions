@@ -104,9 +104,9 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | MUI component | Where |
 | --- | --- |
 | `Paper` | Section containers (via `SectionPaper`) |
-| `Table` | Session list |
+| `Table` / `TableSortLabel` | Session list; clickable column sort |
 | `TextField` | Session text filter; token / peak ctx / turns min–max |
-| `Select` | Session age filter presets |
+| `Select` | Session age filter presets; mobile session sort field |
 | `Chip` | Source, branch, model, kind badges |
 | `Link` | Back navigation |
 | `Tabs` / `Tab` | Session detail panels; Context turn / loaded-context sub-panels |
