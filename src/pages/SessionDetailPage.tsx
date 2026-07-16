@@ -550,7 +550,7 @@ export function SessionDetailPage() {
       <TabPanel id="agents" active={activeTab === "agents"}>
         <SectionPaper
           title="Agents"
-          description="Usage diagram per agent: peak context size and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the Hierarchy tab. Selecting a tool call highlights the agent that ran it."
+          description="Usage diagram per agent: peak context, assistant turn count (including subagent transcripts), and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the Hierarchy tab. Selecting a tool call highlights the agent that ran it."
           sx={{ animation: motion.riseMedium }}
         >
           <AgentBreakdown

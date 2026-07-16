@@ -116,6 +116,18 @@ describe("fixture session parse", () => {
     assert.ok(detail.agentBreakdown.some((a) => a.kind === "subagent"));
     const rootAgent = detail.agentBreakdown.find((a) => a.kind === "root_agent");
     assert.ok(rootAgent);
+    assert.equal(rootAgent.turnCount, detail.timeline.length);
+    assert.equal(parsed.subagentTurnCount, 2);
+    assert.equal(detail.meta.subagentTurnCount, 2);
+    const subAgent = detail.agentBreakdown.find((a) => a.kind === "subagent");
+    assert.ok(subAgent);
+    assert.equal(subAgent.turnCount, 2);
+    assert.equal(
+      detail.agentBreakdown
+        .filter((a) => a.kind === "subagent")
+        .reduce((sum, a) => sum + a.turnCount, 0),
+      detail.meta.subagentTurnCount,
+    );
     assert.ok(Array.isArray(rootAgent.tools));
     assert.equal(
       rootAgent.tools.reduce((sum, t) => sum + t.callCount, 0),

@@ -131,7 +131,7 @@ export function HierarchyAgentMap({
                     : undefined
                 }
                 aria-pressed={selectable ? selected : undefined}
-                title={`${row.label} · ${row.toolCallCount} tools · peak ${formatTokens(row.peakContextTokens)}`}
+                title={`${row.label} · ${row.turnCount} turns · ${row.toolCallCount} tools · peak ${formatTokens(row.peakContextTokens)}`}
                 sx={{
                   display: "flex",
                   alignItems: "flex-start",
@@ -204,7 +204,8 @@ export function HierarchyAgentMap({
                       mt: 0.15,
                     }}
                   >
-                    {row.toolCallCount}t · {formatTokens(row.peakContextTokens)}
+                    {row.turnCount} turns · {row.toolCallCount}t ·{" "}
+                    {formatTokens(row.peakContextTokens)}
                   </Typography>
                 </Box>
               </Box>

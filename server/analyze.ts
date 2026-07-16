@@ -292,6 +292,7 @@ export function buildAnalysisBrief(
     kind: a.kind,
     peakContext: a.peakContextTokens,
     tokens: totalTokens(a.usage),
+    turns: a.turnCount,
     toolCalls: a.toolCallCount,
     tools: a.tools.slice(0, 6),
   }));
@@ -327,6 +328,8 @@ export function buildAnalysisBrief(
       startedAt: meta.startedAt,
       updatedAt: meta.updatedAt,
       messageCount: meta.messageCount,
+      turnCount: meta.turnCount,
+      subagentTurnCount: meta.subagentTurnCount,
       toolCallCount: meta.toolCallCount,
       subagentCount: meta.subagentCount,
       totalTokens: totalTokens(meta.usage),
@@ -366,7 +369,7 @@ export function buildAnalysisBrief(
     JSON.stringify(payload, null, 2),
     "```",
     "",
-    `Peak context: ${formatTokens(meta.peakContextTokens)}; total tokens: ${formatTokens(totalTokens(meta.usage))}; tools: ${meta.toolCallCount}; subagents: ${meta.subagentCount}.`,
+    `Peak context: ${formatTokens(meta.peakContextTokens)}; total tokens: ${formatTokens(totalTokens(meta.usage))}; tools: ${meta.toolCallCount}; root turns: ${meta.turnCount}; subagent turns: ${meta.subagentTurnCount}; subagents: ${meta.subagentCount}.`,
   ].join("\n");
 }
 

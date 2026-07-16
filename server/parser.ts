@@ -90,6 +90,7 @@ export interface RawSessionParse {
   updatedAt: string | null;
   messageCount: number;
   turnCount: number;
+  subagentTurnCount: number;
   toolCallCount: number;
   subagentCount: number;
   model: string | null;
@@ -354,6 +355,14 @@ export async function countSubagentFiles(
   return count;
 }
 
+function countTimelineTurns(entries: SourcedEntry[]): number {
+  let turns = 0;
+  for (const { entry } of entries) {
+    if (isTimelineAssistantTurn(entry)) turns += 1;
+  }
+  return turns;
+}
+
 async function loadSubagents(
   sessionFilePath: string,
 ): Promise<{ agentId: string; filePath: string; entries: SourcedEntry[] }[]> {
@@ -396,12 +405,14 @@ export async function parseSessionFile(
   options: { lightweight?: boolean; sessionId?: string } = {},
 ): Promise<RawSessionParse> {
   const entries = await readEntries(filePath);
-  const subagentFiles = options.lightweight
-    ? []
-    : await loadSubagents(filePath);
-  const subagentFileCount = options.lightweight
-    ? await countSubagentFiles(filePath)
-    : subagentFiles.length;
+  // Always scan subagent JSONL so list view can report subagent turn counts;
+  // discard entry payloads afterward when lightweight.
+  const subagentFiles = await loadSubagents(filePath);
+  const subagentFileCount = subagentFiles.length;
+  const subagentTurnCount = subagentFiles.reduce(
+    (n, sub) => n + countTimelineTurns(sub.entries),
+    0,
+  );
 
   let summary: string | null = null;
   let startedAt: string | null = null;
@@ -502,6 +513,7 @@ export async function parseSessionFile(
     updatedAt,
     messageCount,
     turnCount,
+    subagentTurnCount,
     toolCallCount,
     subagentCount,
     model,
@@ -1563,6 +1575,7 @@ function buildAgentTreeFromEntries(
   peak: number;
   toolCalls: number;
   messages: number;
+  turns: number;
   tools: Map<string, number>;
 } {
   const root: TreeNode = {
@@ -1585,6 +1598,7 @@ function buildAgentTreeFromEntries(
   let peak = 0;
   let toolCalls = 0;
   let messages = 0;
+  let turns = 0;
   let assistantIndex = 0;
   let lastContext: number | null = null;
 
@@ -1655,6 +1669,7 @@ function buildAgentTreeFromEntries(
       usage = addUsage(usage, u);
       const ctx = contextSize(u);
       peak = Math.max(peak, ctx);
+      if (isTimelineAssistantTurn(entry)) turns += 1;
       const delta =
         lastContext == null || totalTokens(u) === 0 ? null : ctx - lastContext;
       if (totalTokens(u) > 0) lastContext = ctx;
@@ -1816,7 +1831,7 @@ function buildAgentTreeFromEntries(
     contextAfter: peak || null,
     contextDelta: null,
   };
-  return { tree: root, usage, peak, toolCalls, messages, tools: toolCounts };
+  return { tree: root, usage, peak, toolCalls, messages, turns, tools: toolCounts };
 }
 
 function agentToolSummaries(
@@ -1844,6 +1859,7 @@ export function buildSessionDetail(
     updatedAt: parsed.updatedAt,
     messageCount: parsed.messageCount,
     turnCount: parsed.turnCount,
+    subagentTurnCount: parsed.subagentTurnCount,
     toolCallCount: parsed.toolCallCount,
     subagentCount: parsed.subagentCount,
     model: parsed.model,
@@ -1870,6 +1886,7 @@ export function buildSessionDetail(
       peakContextTokens: rootBuild.peak,
       toolCallCount: rootBuild.toolCalls,
       messageCount: rootBuild.messages,
+      turnCount: rootBuild.turns,
       tools: agentToolSummaries(rootBuild.tools),
     },
   ];
@@ -1909,6 +1926,7 @@ export function buildSessionDetail(
       peakContextTokens: built.peak,
       toolCallCount: built.toolCalls,
       messageCount: built.messages,
+      turnCount: built.turns,
       tools: agentToolSummaries(built.tools),
     });
 
