@@ -6,6 +6,7 @@ import {
   analysisJsonSchema,
   analyzeSession,
   buildAnalysisBrief,
+  buildAnalyzeEnv,
   parseAnalysisOutput,
   resolveAnalyzeCwd,
   resolveClaudeExecutable,
@@ -355,6 +356,65 @@ describe("analyzeSession", () => {
       },
     });
     assert.equal(seenPath, "/usr/local/bin/claude");
+  });
+
+  it("inherits user settings and host env for system auth", async () => {
+    const detail = await loadFixtureDetail();
+    let seenSources: string[] | undefined;
+    let seenEnv: Record<string, string | undefined> | undefined;
+    await analyzeSession(detail, {
+      loadExtras: async () => ({ info: null, messages: [] }),
+      resolveExecutable: () => undefined,
+      buildEnv: () =>
+        buildAnalyzeEnv({
+          PATH: "/usr/bin",
+          HOME: "/tmp/claude-home",
+          ANTHROPIC_API_KEY: "sk-test-inherit",
+          CLAUDE_CODE_OAUTH_TOKEN: "oauth-test",
+        }),
+      runner: async function* ({ options }) {
+        seenSources = options?.settingSources as string[] | undefined;
+        seenEnv = options?.env;
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          is_error: false,
+          num_turns: 1,
+          result: "",
+          stop_reason: "end_turn",
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          structured_output: {
+            summary: "Inherited system auth.",
+            findings: [],
+            recommendations: [],
+          },
+          uuid: "00000000-0000-0000-0000-000000000014",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+      },
+    });
+    assert.deepEqual(seenSources, ["user"]);
+    assert.equal(seenEnv?.ANTHROPIC_API_KEY, "sk-test-inherit");
+    assert.equal(seenEnv?.CLAUDE_CODE_OAUTH_TOKEN, "oauth-test");
+    assert.equal(seenEnv?.HOME, "/tmp/claude-home");
+    assert.equal(seenEnv?.CLAUDE_AGENT_SDK_CLIENT_APP, "claude-sessions");
+  });
+
+  it("buildAnalyzeEnv fills HOME when missing", () => {
+    const env = buildAnalyzeEnv({ PATH: "/bin", HOME: "" });
+    assert.ok(env.HOME && env.HOME.length > 0);
+    assert.equal(env.PATH, "/bin");
+    assert.equal(env.CLAUDE_AGENT_SDK_CLIENT_APP, "claude-sessions");
   });
 
   it("continues when loadExtras hangs past its budget", async () => {

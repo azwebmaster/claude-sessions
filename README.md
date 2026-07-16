@@ -76,13 +76,13 @@ Session detail pages expose **Analyze session**, which:
 2. Enriches it with Agent SDK session APIs when the transcript is under `~/.claude/projects`
 3. Runs a single-turn structured `query()` (default model: `claude-haiku-4-5`, override with `$CLAUDE_SESSIONS_ANALYZE_MODEL` or `--model`)
 
-Requires Anthropic auth (`ANTHROPIC_API_KEY` or `claude auth login`). The HTTP endpoint is `POST /api/sessions/:id/analyze` (add `?stream=1` or `Accept: application/x-ndjson` for a progress stream).
+Auth is inherited from the host: `~/.claude` user settings (`apiKeyHelper` / settings `env`), interactive `claude auth login` credentials, and process env (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, cloud-provider vars). The HTTP endpoint is `POST /api/sessions/:id/analyze` (add `?stream=1` or `Accept: application/x-ndjson` for a progress stream).
 
 Analysis runs headlessly (`permissionMode: dontAsk`) with:
 - an **idle** timeout (default 90s without progress, `$CLAUDE_SESSIONS_ANALYZE_IDLE_TIMEOUT_MS`)
 - a **hard** wall-clock cap (default 300s, `$CLAUDE_SESSIONS_ANALYZE_TIMEOUT_MS`)
 
-The UI streams stage progress (brief → CLI start → auth → model → parse). When a `claude` binary is on `PATH` (or `$CLAUDE_SESSIONS_CLAUDE_PATH`), analysis prefers that executable so interactive CLI login credentials are reused; otherwise it uses the SDK-bundled CLI. If the interactive CLI works but the server still stalls, set `ANTHROPIC_API_KEY` on the server process.
+The UI streams stage progress (brief → CLI start → auth → model → parse). Analysis loads user setting sources, passes through the server environment (`HOME`, `PATH`, Anthropic/Claude vars), and prefers a `claude` binary on `PATH` (or `$CLAUDE_SESSIONS_CLAUDE_PATH`) so the same credentials as the interactive CLI are used.
 
 ## Scripts
 

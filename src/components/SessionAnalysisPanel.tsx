@@ -142,7 +142,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     } catch (err) {
       if (controller.signal.aborted) {
         setError(
-          "Analysis timed out or was cancelled. If the Claude CLI works interactively, set ANTHROPIC_API_KEY for the server process (or CLAUDE_SESSIONS_CLAUDE_PATH to your `claude` binary) and retry.",
+          "Analysis timed out or was cancelled. Analysis inherits system Claude auth — run the server as the same user as `claude auth login`, or set ANTHROPIC_API_KEY / CLAUDE_SESSIONS_CLAUDE_PATH and retry.",
         );
       } else {
         setError(err instanceof Error ? err.message : String(err));
@@ -162,7 +162,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
   return (
     <SectionPaper
       title="Agent SDK analysis"
-      description="Use the Claude Agent SDK to read session metadata/messages and produce optimization findings for this run. Requires ANTHROPIC_API_KEY or an authenticated Claude CLI login."
+      description="Use the Claude Agent SDK to read session metadata/messages and produce optimization findings for this run. Inherits system auth from your Claude user settings, CLI login, or server environment."
       sx={{ mb: layout.sectionGap }}
     >
       <Stack
@@ -306,8 +306,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
             sx={{ display: "block", mt: 1.5 }}
           >
             Idle runs stop after ~90s without progress; hard cap is 5 minutes.
-            Prefer ANTHROPIC_API_KEY in the server env if CLI login works but
-            analysis still stalls.
+            Uses the same auth as your local Claude CLI (user settings + env).
           </Typography>
         </Box>
       ) : null}

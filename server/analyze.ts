@@ -9,6 +9,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { z } from "zod";
 import type {
   AnalyzeProgressEvent,
@@ -83,6 +84,31 @@ export function resolveClaudeExecutable(): string | undefined {
     // Use the SDK-bundled binary.
   }
   return undefined;
+}
+
+/**
+ * Environment for the Agent SDK CLI subprocess.
+ *
+ * Explicitly inherits the host process env (PATH, HOME, ANTHROPIC_*,
+ * CLAUDE_*, cloud-provider creds) so system auth resolves the same way as
+ * interactive `claude`. `options.env` replaces the subprocess env entirely.
+ */
+export function buildAnalyzeEnv(
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  // Keychain / ~/.claude credential lookup needs a stable home directory.
+  if (!env.HOME?.trim()) env.HOME = homedir();
+  if (process.platform === "win32" && !env.USERPROFILE?.trim()) {
+    env.USERPROFILE = homedir();
+  }
+  if (!env.CLAUDE_AGENT_SDK_CLIENT_APP?.trim()) {
+    env.CLAUDE_AGENT_SDK_CLIENT_APP = "claude-sessions";
+  }
+  return env;
 }
 
 function positiveMs(value: number, fallback: number): number {
@@ -353,6 +379,8 @@ export interface AnalyzeSessionOptions {
   ) => Promise<SdkSessionExtras>;
   /** Injected for tests; defaults to `resolveClaudeExecutable`. */
   resolveExecutable?: () => string | undefined;
+  /** Injected for tests; defaults to `buildAnalyzeEnv`. */
+  buildEnv?: () => Record<string, string | undefined>;
 }
 
 export class AnalyzeSessionError extends Error {
@@ -383,7 +411,7 @@ function classifyRunnerError(err: unknown): AnalyzeSessionError {
     lower.includes("please run /login")
   ) {
     return new AnalyzeSessionError(
-      "Claude Agent SDK is not authenticated. Set ANTHROPIC_API_KEY or run `claude auth login`.",
+      "Claude Agent SDK is not authenticated. Analysis inherits system auth (user Claude settings, `claude auth login`, or ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN in the server environment).",
       "auth",
     );
   }
@@ -410,6 +438,7 @@ export async function analyzeSession(
   const loadExtras = options.loadExtras ?? loadSdkSessionExtras;
   const resolveExecutable =
     options.resolveExecutable ?? resolveClaudeExecutable;
+  const buildEnv = options.buildEnv ?? buildAnalyzeEnv;
   const timeoutMs = positiveMs(
     options.timeoutMs ?? DEFAULT_ANALYZE_TIMEOUT_MS,
     300_000,
@@ -478,7 +507,7 @@ export async function analyzeSession(
       : " The Claude CLI subprocess never became ready.";
     const authHint =
       !sawSdkActivity || /login|auth|api key|unauthorized/i.test(stderrHint)
-        ? " If the interactive CLI works but this fails, set ANTHROPIC_API_KEY for the server process or point CLAUDE_SESSIONS_CLAUDE_PATH at your `claude` binary."
+        ? " Analysis inherits ~/.claude user settings and the process env; if the interactive CLI works but this fails, ensure the server runs as the same user (HOME) or set ANTHROPIC_API_KEY / CLAUDE_SESSIONS_CLAUDE_PATH."
         : "";
     const stderrPart = stderrHint ? ` CLI stderr: ${stderrHint}` : "";
     const kind = idleTimedOut
@@ -549,7 +578,9 @@ export async function analyzeSession(
         maxTurns: 1,
         tools: [],
         allowedTools: [],
-        settingSources: [],
+        // Load user settings so apiKeyHelper / settings env auth matches the
+        // interactive CLI. Skip project/local to avoid CLAUDE.md and project MCP.
+        settingSources: ["user"],
         // Headless HTTP/CLI: never block waiting for an interactive prompt.
         permissionMode: "dontAsk",
         systemPrompt: ANALYZER_SYSTEM_PROMPT,
@@ -558,8 +589,8 @@ export async function analyzeSession(
           schema: analysisJsonSchema(),
         },
         cwd,
-        // Inherit the server env so CLI login / API key credentials resolve.
-        env: process.env as Record<string, string | undefined>,
+        // Inherit host env (PATH, HOME, ANTHROPIC_*, CLAUDE_*, cloud creds).
+        env: buildEnv(),
         abortController,
         stderr: (data: string) => {
           if (data) {
