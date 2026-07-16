@@ -31,6 +31,8 @@ import { api, formatDate } from "../lib/api";
 import {
   AGE_PRESETS,
   boundsFromInputs,
+  DEFAULT_MAX_AGE_MS,
+  DEFAULT_SESSION_FILTERS,
   hasActiveMetricFilters,
   matchesSessionFilters,
   type SessionListFilters,
@@ -80,8 +82,9 @@ function MetricRangeFields({
   max,
   onMinChange,
   onMaxChange,
-  minPlaceholder = "Min",
-  maxPlaceholder = "Max",
+  minPlaceholder = "min",
+  maxPlaceholder = "max",
+  hint,
 }: {
   label: string;
   min: string;
@@ -90,50 +93,88 @@ function MetricRangeFields({
   onMaxChange: (value: string) => void;
   minPlaceholder?: string;
   maxPlaceholder?: string;
+  /** Optional tooltip for accepted input formats (e.g. k/M suffixes). */
+  hint?: string;
 }) {
   const fieldSx = {
-    width: { xs: "100%", sm: 88 },
+    width: 72,
     minWidth: 0,
-    "& .MuiInputBase-input": {
+    "& .MuiInputBase-root": {
       fontFamily: monoFontFamily,
       fontSize: "0.8rem",
+    },
+    "& .MuiInputBase-input": {
+      py: 0.5,
+      px: 0.75,
+      textAlign: "right",
     },
   } as const;
 
   return (
-    <Stack
-      direction="row"
-      spacing={0.75}
-      useFlexGap
-      sx={{ alignItems: "center", flexWrap: "wrap", minWidth: 0 }}
+    <Box
+      title={hint}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        minWidth: 0,
+        px: 1,
+        py: 0.5,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "action.hover",
+      }}
     >
       <Typography
-        variant="caption"
+        component="span"
+        variant="overline"
         color="text.secondary"
-        sx={{ minWidth: { sm: 64 }, flexShrink: 0 }}
+        sx={{
+          flexShrink: 0,
+          fontSize: "0.65rem",
+          lineHeight: 1.2,
+          letterSpacing: "0.04em",
+        }}
       >
         {label}
       </Typography>
       <TextField
         size="small"
-        label={minPlaceholder}
+        variant="standard"
+        placeholder={minPlaceholder}
         value={min}
         onChange={(e) => onMinChange(e.target.value)}
         aria-label={`${label} minimum`}
+        slotProps={{
+          input: { disableUnderline: true },
+          htmlInput: { inputMode: "decimal" },
+        }}
         sx={fieldSx}
       />
-      <Typography variant="caption" color="text.secondary" aria-hidden>
+      <Typography
+        component="span"
+        variant="caption"
+        color="text.secondary"
+        aria-hidden
+        sx={{ lineHeight: 1, userSelect: "none" }}
+      >
         –
       </Typography>
       <TextField
         size="small"
-        label={maxPlaceholder}
+        variant="standard"
+        placeholder={maxPlaceholder}
         value={max}
         onChange={(e) => onMaxChange(e.target.value)}
         aria-label={`${label} maximum`}
+        slotProps={{
+          input: { disableUnderline: true },
+          htmlInput: { inputMode: "decimal" },
+        }}
         sx={fieldSx}
       />
-    </Stack>
+    </Box>
   );
 }
 
@@ -239,14 +280,14 @@ export function SessionListPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<SessionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(DEFAULT_SESSION_FILTERS.query);
   const [tokensMin, setTokensMin] = useState("");
   const [tokensMax, setTokensMax] = useState("");
   const [peakCtxMin, setPeakCtxMin] = useState("");
   const [peakCtxMax, setPeakCtxMax] = useState("");
   const [turnsMin, setTurnsMin] = useState("");
   const [turnsMax, setTurnsMax] = useState("");
-  const [maxAgeMs, setMaxAgeMs] = useState<number | null>(null);
+  const [maxAgeMs, setMaxAgeMs] = useState<number | null>(DEFAULT_MAX_AGE_MS);
   const [sort, setSort] = useState<SessionListSort>(DEFAULT_SESSION_SORT);
 
   useEffect(() => {
@@ -395,8 +436,7 @@ export function SessionListPage() {
             max={tokensMax}
             onMinChange={setTokensMin}
             onMaxChange={setTokensMax}
-            minPlaceholder="Min"
-            maxPlaceholder="Max"
+            hint="Accepts plain numbers or k / M suffixes (e.g. 100k, 1.5M)"
           />
           <MetricRangeFields
             label="Peak ctx"
@@ -404,6 +444,7 @@ export function SessionListPage() {
             max={peakCtxMax}
             onMinChange={setPeakCtxMin}
             onMaxChange={setPeakCtxMax}
+            hint="Accepts plain numbers or k / M suffixes (e.g. 100k, 1.5M)"
           />
           <MetricRangeFields
             label="Turns"
@@ -412,7 +453,15 @@ export function SessionListPage() {
             onMinChange={setTurnsMin}
             onMaxChange={setTurnsMax}
           />
-          <FormControl size="small" sx={{ minWidth: 140 }}>
+          <FormControl
+            size="small"
+            sx={{
+              minWidth: 148,
+              "& .MuiOutlinedInput-root": {
+                bgcolor: "action.hover",
+              },
+            }}
+          >
             <InputLabel id="session-age-filter-label">Age</InputLabel>
             <Select
               labelId="session-age-filter-label"

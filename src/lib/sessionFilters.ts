@@ -18,12 +18,24 @@ export type SessionListFilters = {
 
 export const EMPTY_BOUNDS: NumericBounds = { min: null, max: null };
 
+const MS_HOUR = 60 * 60 * 1000;
+const MS_DAY = 24 * MS_HOUR;
+
+/** Default age window for the session list (Last 24 hours). */
+export const DEFAULT_MAX_AGE_MS = MS_DAY;
+
 export const EMPTY_SESSION_FILTERS: SessionListFilters = {
   query: "",
   tokens: EMPTY_BOUNDS,
   peakCtx: EMPTY_BOUNDS,
   turns: EMPTY_BOUNDS,
   maxAgeMs: null,
+};
+
+/** Initial filters for the session list page. */
+export const DEFAULT_SESSION_FILTERS: SessionListFilters = {
+  ...EMPTY_SESSION_FILTERS,
+  maxAgeMs: DEFAULT_MAX_AGE_MS,
 };
 
 export type AgePreset = {
@@ -34,11 +46,11 @@ export type AgePreset = {
 
 export const AGE_PRESETS: AgePreset[] = [
   { label: "Any age", maxAgeMs: null },
-  { label: "Last hour", maxAgeMs: 60 * 60 * 1000 },
-  { label: "Last 24 hours", maxAgeMs: 24 * 60 * 60 * 1000 },
-  { label: "Last 7 days", maxAgeMs: 7 * 24 * 60 * 60 * 1000 },
-  { label: "Last 30 days", maxAgeMs: 30 * 24 * 60 * 60 * 1000 },
-  { label: "Last 90 days", maxAgeMs: 90 * 24 * 60 * 60 * 1000 },
+  { label: "Last hour", maxAgeMs: MS_HOUR },
+  { label: "Last 24 hours", maxAgeMs: MS_DAY },
+  { label: "Last 7 days", maxAgeMs: 7 * MS_DAY },
+  { label: "Last 30 days", maxAgeMs: 30 * MS_DAY },
+  { label: "Last 90 days", maxAgeMs: 90 * MS_DAY },
 ];
 
 /**

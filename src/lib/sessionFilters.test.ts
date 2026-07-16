@@ -5,6 +5,9 @@ import { emptyUsage } from "@shared/types";
 import {
   AGE_PRESETS,
   boundsFromInputs,
+  DEFAULT_MAX_AGE_MS,
+  DEFAULT_SESSION_FILTERS,
+  EMPTY_SESSION_FILTERS,
   hasActiveMetricFilters,
   inNumericBounds,
   matchesSessionFilters,
@@ -181,9 +184,20 @@ describe("hasActiveMetricFilters / AGE_PRESETS", () => {
       }),
       true,
     );
+    assert.equal(hasActiveMetricFilters(DEFAULT_SESSION_FILTERS), true);
+    assert.equal(hasActiveMetricFilters(EMPTY_SESSION_FILTERS), false);
   });
 
   it("includes an unbound Any age preset", () => {
     assert.equal(AGE_PRESETS[0]?.maxAgeMs, null);
+  });
+
+  it("defaults the session list to the Last 24 hours preset", () => {
+    assert.equal(DEFAULT_MAX_AGE_MS, 24 * 60 * 60 * 1000);
+    assert.equal(DEFAULT_SESSION_FILTERS.maxAgeMs, DEFAULT_MAX_AGE_MS);
+    assert.equal(
+      AGE_PRESETS.find((p) => p.label === "Last 24 hours")?.maxAgeMs,
+      DEFAULT_MAX_AGE_MS,
+    );
   });
 });
