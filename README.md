@@ -78,6 +78,8 @@ Session detail pages expose **Analyze session**, which:
 
 Requires Anthropic auth (`ANTHROPIC_API_KEY` or `claude auth login`). The HTTP endpoint is `POST /api/sessions/:id/analyze`.
 
+Analysis runs headlessly (`permissionMode: dontAsk`) with a wall-clock timeout (default 120s, override with `$CLAUDE_SESSIONS_ANALYZE_TIMEOUT_MS`) so a stuck Claude CLI subprocess cannot spin the UI forever.
+
 ## Scripts
 
 | Script | Description |

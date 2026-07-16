@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -13,6 +13,9 @@ import type { AnalysisSeverity, SessionAnalysis } from "@shared/types";
 import { EmptyState, SectionPaper } from "./ui";
 import { apiPost } from "../lib/api";
 import { layout } from "../theme";
+
+/** Slightly above the server default (120s) so the API can report timeout first. */
+const CLIENT_ANALYZE_TIMEOUT_MS = 130_000;
 
 interface Props {
   sessionId: string;
@@ -30,24 +33,55 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
   const [analysis, setAnalysis] = useState<SessionAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     setAnalysis(null);
     setError(null);
     setLoading(false);
   }, [sessionId]);
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, []);
+
   const runAnalysis = async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, CLIENT_ANALYZE_TIMEOUT_MS);
+
     setLoading(true);
     setError(null);
     try {
       const result = await apiPost<SessionAnalysis>(
         `/api/sessions/${sessionId}/analyze`,
+        {},
+        { signal: controller.signal },
       );
-      setAnalysis(result);
+      if (!controller.signal.aborted) {
+        setAnalysis(result);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (controller.signal.aborted) {
+        setError(
+          "Analysis timed out or was cancelled. Check ANTHROPIC_API_KEY / `claude auth login`, then try again.",
+        );
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      window.clearTimeout(timeoutId);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       setLoading(false);
     }
   };
@@ -109,6 +143,15 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
           <CircularProgress size={28} />
           <Typography color="text.secondary" sx={{ mt: 1.5 }}>
             Asking the Agent SDK to profile this session…
+          </Typography>
+          <Typography
+            color="text.secondary"
+            variant="caption"
+            sx={{ display: "block", mt: 0.75 }}
+          >
+            Usually finishes in under a minute. If this never returns, auth or
+            the Claude CLI subprocess may be stuck — the request times out
+            automatically.
           </Typography>
         </Box>
       ) : null}

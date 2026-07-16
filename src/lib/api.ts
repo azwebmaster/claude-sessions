@@ -18,14 +18,21 @@ export async function api<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type ApiPostOptions = {
+  /** AbortSignal for cancellation / client-side timeout. */
+  signal?: AbortSignal;
+};
+
 export async function apiPost<T>(
   path: string,
-  body?: unknown,
+  body: unknown = {},
+  options: ApiPostOptions = {},
 ): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal: options.signal,
   });
   if (!res.ok) {
     throw new Error(await readError(res));

@@ -100,7 +100,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     } catch (err) {
       if (err instanceof AnalyzeSessionError) {
         const status =
-          err.code === "auth" ? 503 : err.code === "empty" ? 502 : 500;
+          err.code === "auth"
+            ? 503
+            : err.code === "timeout"
+              ? 504
+              : err.code === "empty"
+                ? 502
+                : 500;
         return c.json({ error: err.message, code: err.code }, status);
       }
       const message = err instanceof Error ? err.message : String(err);
