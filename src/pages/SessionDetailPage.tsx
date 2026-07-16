@@ -491,30 +491,20 @@ export function SessionDetailPage() {
       <TabPanel id="hierarchy" active={activeTab === "hierarchy"}>
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to highlight it; use the chevron to expand or collapse; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Starts collapsed below level 1; use Expand all / Collapse all or the chevron on a node. Click a node to highlight it; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
           sx={{ animation: motion.riseMedium }}
         >
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
-              minWidth: 0,
+          <HierarchyTree
+            node={detail.tree}
+            focusedNodeId={focusedNodeId}
+            forceOpenIds={forceOpenIds}
+            onFocusNode={(nodeId) => {
+              setFocusedNodeId(nodeId);
             }}
-          >
-            <HierarchyTree
-              node={detail.tree}
-              defaultOpen
-              focusedNodeId={focusedNodeId}
-              forceOpenIds={forceOpenIds}
-              onFocusNode={(nodeId) => {
-                setFocusedNodeId(nodeId);
-              }}
-              onViewLog={(node) => {
-                if (node.log) openLogModal(node.log);
-              }}
-            />
-          </Box>
+            onViewLog={(node) => {
+              if (node.log) openLogModal(node.log);
+            }}
+          />
         </SectionPaper>
       </TabPanel>
 

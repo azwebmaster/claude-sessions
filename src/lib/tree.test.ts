@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { TreeNode } from "@shared/types";
 import {
+  collectExpandableIds,
+  collectExpandableIdsBelowDepth,
   findAncestorIds,
   findFirstToolCallByName,
   findNode,
@@ -131,5 +133,16 @@ describe("tree helpers", () => {
     assert.equal(findFirstToolCallByName(tree, "Task", "session-1"), "tool-1");
     assert.equal(findFirstToolCallByName(tree, "Bash"), null);
     assert.equal(findFirstToolCallByName(tree, "Read", "missing"), null);
+  });
+
+  it("collects expandable node ids and level-1 defaults", () => {
+    assert.deepEqual(collectExpandableIds(tree), [
+      "session-1",
+      "turn-1",
+      "tool-1",
+      "sub-a",
+      "sub-turn",
+    ]);
+    assert.deepEqual(collectExpandableIdsBelowDepth(tree, 1), ["session-1"]);
   });
 });
