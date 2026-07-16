@@ -7,9 +7,12 @@ import {
   type SDKSessionInfo,
   type SessionMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { accessSync, constants, existsSync } from "node:fs";
 import { z } from "zod";
 import type {
+  AnalyzeProgressEvent,
+  AnalyzeProgressStage,
   SessionAnalysis,
   SessionDetail,
 } from "../shared/types.js";
@@ -18,9 +21,20 @@ import { formatTokens, totalTokens } from "../shared/types.js";
 const DEFAULT_ANALYZE_MODEL =
   process.env.CLAUDE_SESSIONS_ANALYZE_MODEL ?? "claude-haiku-4-5";
 
-/** Wall-clock budget for one analyze run (SDK spawn + model). */
+/**
+ * Hard wall-clock cap for one analyze run (SDK spawn + model).
+ * Activity (SDK messages / progress) can keep the run alive until this limit.
+ */
 const DEFAULT_ANALYZE_TIMEOUT_MS = Number(
-  process.env.CLAUDE_SESSIONS_ANALYZE_TIMEOUT_MS ?? 120_000,
+  process.env.CLAUDE_SESSIONS_ANALYZE_TIMEOUT_MS ?? 300_000,
+);
+
+/**
+ * Abort if no progress events / SDK messages arrive for this long.
+ * Prevents silent hangs while still allowing slow-but-active model calls.
+ */
+const DEFAULT_ANALYZE_IDLE_TIMEOUT_MS = Number(
+  process.env.CLAUDE_SESSIONS_ANALYZE_IDLE_TIMEOUT_MS ?? 90_000,
 );
 
 /** Cap how long SDK session-file APIs may block before we proceed profile-only. */
@@ -33,6 +47,46 @@ const SDK_EXTRAS_TIMEOUT_MS = 8_000;
 export function resolveAnalyzeCwd(projectPath: string | null | undefined): string {
   if (projectPath && existsSync(projectPath)) return projectPath;
   return process.cwd();
+}
+
+/**
+ * Prefer a user-installed `claude` binary (same one as `claude auth login`)
+ * over the SDK-bundled native binary when available. Override with
+ * `$CLAUDE_SESSIONS_CLAUDE_PATH`.
+ */
+export function resolveClaudeExecutable(): string | undefined {
+  const fromEnv = process.env.CLAUDE_SESSIONS_CLAUDE_PATH?.trim();
+  if (fromEnv) {
+    try {
+      accessSync(fromEnv, constants.X_OK);
+      return fromEnv;
+    } catch {
+      // fall through to PATH lookup
+    }
+  }
+
+  try {
+    const whichCmd = process.platform === "win32" ? "where" : "which";
+    const found = execFileSync(whichCmd, ["claude"], {
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (found) {
+      accessSync(found, constants.X_OK);
+      return found;
+    }
+  } catch {
+    // Use the SDK-bundled binary.
+  }
+  return undefined;
+}
+
+function positiveMs(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function withTimeout<T>(
@@ -274,14 +328,22 @@ export type AgentQueryRunner = (params: {
 
 const defaultRunner: AgentQueryRunner = (params) => query(params);
 
+export type AnalyzeProgressListener = (
+  event: AnalyzeProgressEvent,
+) => void | Promise<void>;
+
 export interface AnalyzeSessionOptions {
   model?: string;
-  /** Wall-clock timeout for the full analyze run. */
+  /** Hard wall-clock timeout for the full analyze run. */
   timeoutMs?: number;
+  /** Abort when no progress / SDK activity for this long. */
+  idleTimeoutMs?: number;
   /** Cap for SDK getSessionInfo/getSessionMessages enrichment. */
   extrasTimeoutMs?: number;
   /** Optional external abort; analyze also aborts itself on timeout. */
   abortController?: AbortController;
+  /** Live progress stages for UI / CLI streaming. */
+  onProgress?: AnalyzeProgressListener;
   /** Injected for tests; defaults to Agent SDK `query`. */
   runner?: AgentQueryRunner;
   /** Injected for tests; defaults to `loadSdkSessionExtras`. */
@@ -289,6 +351,8 @@ export interface AnalyzeSessionOptions {
     sessionId: string,
     projectPath: string | null,
   ) => Promise<SdkSessionExtras>;
+  /** Injected for tests; defaults to `resolveClaudeExecutable`. */
+  resolveExecutable?: () => string | undefined;
 }
 
 export class AnalyzeSessionError extends Error {
@@ -333,8 +397,9 @@ function classifyRunnerError(err: unknown): AnalyzeSessionError {
  * Profile a session with the Claude Agent SDK: enrich via session APIs,
  * then run a single-turn structured `query()` for optimization advice.
  *
- * Always bounds the run with an AbortController timeout — the Agent SDK can
- * hang forever when the CLI subprocess fails to start or never yields.
+ * Bounds the run with a hard wall-clock timeout plus an idle timeout that
+ * resets on progress / SDK activity — the Agent SDK can hang forever when the
+ * CLI subprocess fails to start or never yields.
  */
 export async function analyzeSession(
   detail: SessionDetail,
@@ -343,31 +408,93 @@ export async function analyzeSession(
   const model = options.model ?? DEFAULT_ANALYZE_MODEL;
   const runner = options.runner ?? defaultRunner;
   const loadExtras = options.loadExtras ?? loadSdkSessionExtras;
-  const timeoutMs =
-    options.timeoutMs ??
-    (Number.isFinite(DEFAULT_ANALYZE_TIMEOUT_MS) &&
-    DEFAULT_ANALYZE_TIMEOUT_MS > 0
-      ? DEFAULT_ANALYZE_TIMEOUT_MS
-      : 120_000);
+  const resolveExecutable =
+    options.resolveExecutable ?? resolveClaudeExecutable;
+  const timeoutMs = positiveMs(
+    options.timeoutMs ?? DEFAULT_ANALYZE_TIMEOUT_MS,
+    300_000,
+  );
+  const idleTimeoutMs = Math.min(
+    positiveMs(
+      options.idleTimeoutMs ?? DEFAULT_ANALYZE_IDLE_TIMEOUT_MS,
+      90_000,
+    ),
+    timeoutMs,
+  );
   const extrasTimeoutMs = Math.min(
     options.extrasTimeoutMs ?? SDK_EXTRAS_TIMEOUT_MS,
     timeoutMs,
   );
   const abortController = options.abortController ?? new AbortController();
+  const startedAt = Date.now();
   let timedOut = false;
-  const timer = setTimeout(() => {
+  let idleTimedOut = false;
+  let sawSdkActivity = false;
+  let lastStage: AnalyzeProgressStage | null = null;
+  const stderrChunks: string[] = [];
+
+  const emitProgress = async (
+    stage: AnalyzeProgressStage,
+    message: string,
+  ) => {
+    lastStage = stage;
+    const event: AnalyzeProgressEvent = {
+      type: "progress",
+      stage,
+      message,
+      elapsedMs: Date.now() - startedAt,
+    };
+    try {
+      await options.onProgress?.(event);
+    } catch {
+      // Progress listeners must not break analysis.
+    }
+    bumpIdleTimer();
+  };
+
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const bumpIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (abortController.signal.aborted) return;
+    idleTimer = setTimeout(() => {
+      timedOut = true;
+      idleTimedOut = true;
+      abortController.abort();
+    }, idleTimeoutMs);
+  };
+
+  const hardTimer = setTimeout(() => {
     timedOut = true;
     abortController.abort();
   }, timeoutMs);
+  bumpIdleTimer();
 
-  const timeoutError = () =>
-    new AnalyzeSessionError(
-      `Analysis timed out after ${timeoutMs}ms. The Agent SDK may be waiting on auth, a stuck CLI subprocess, or a network stall. Set ANTHROPIC_API_KEY (or run \`claude auth login\`) and retry.`,
+  const timeoutError = () => {
+    const elapsed = Date.now() - startedAt;
+    const stderrHint = stderrChunks.join("").trim().slice(0, 280);
+    const stageHint = lastStage ? ` Last stage: ${lastStage}.` : "";
+    const activityHint = sawSdkActivity
+      ? " The Claude CLI started but stopped producing output."
+      : " The Claude CLI subprocess never became ready.";
+    const authHint =
+      !sawSdkActivity || /login|auth|api key|unauthorized/i.test(stderrHint)
+        ? " If the interactive CLI works but this fails, set ANTHROPIC_API_KEY for the server process or point CLAUDE_SESSIONS_CLAUDE_PATH at your `claude` binary."
+        : "";
+    const stderrPart = stderrHint ? ` CLI stderr: ${stderrHint}` : "";
+    const kind = idleTimedOut
+      ? `idle for ${idleTimeoutMs}ms`
+      : `${timeoutMs}ms wall-clock`;
+    return new AnalyzeSessionError(
+      `Analysis timed out after ${elapsed}ms (${kind}).${activityHint}${stageHint}${authHint}${stderrPart}`,
       "timeout",
     );
+  };
 
   try {
+    await emitProgress("starting", "Preparing session profile…");
+
     let extras: SdkSessionExtras = { info: null, messages: [] };
+    await emitProgress("enriching", "Reading SDK session metadata…");
     try {
       extras = await withTimeout(
         loadExtras(detail.meta.id, detail.meta.projectPath),
@@ -389,6 +516,13 @@ export async function analyzeSession(
     );
     const prompt = buildAnalysisBrief(detail, extras);
     const cwd = resolveAnalyzeCwd(detail.meta.projectPath);
+    const executable = resolveExecutable();
+    await emitProgress(
+      "brief_ready",
+      usedSdkSessionApi
+        ? "Built analysis brief (SDK session APIs included)."
+        : "Built analysis brief (profile metrics only).",
+    );
 
     const usedModel: string | null = model;
 
@@ -403,29 +537,106 @@ export async function analyzeSession(
       let durationMs = 0;
       let costUsd: number | null = null;
 
+      await emitProgress(
+        "query_start",
+        executable
+          ? `Starting Agent SDK via ${executable}…`
+          : "Starting Agent SDK (bundled Claude CLI)…",
+      );
+
+      const queryOptions: Options = {
+        model,
+        maxTurns: 1,
+        tools: [],
+        allowedTools: [],
+        settingSources: [],
+        // Headless HTTP/CLI: never block waiting for an interactive prompt.
+        permissionMode: "dontAsk",
+        systemPrompt: ANALYZER_SYSTEM_PROMPT,
+        outputFormat: {
+          type: "json_schema",
+          schema: analysisJsonSchema(),
+        },
+        cwd,
+        // Inherit the server env so CLI login / API key credentials resolve.
+        env: process.env as Record<string, string | undefined>,
+        abortController,
+        stderr: (data: string) => {
+          if (data) {
+            stderrChunks.push(data);
+            if (stderrChunks.length > 40) stderrChunks.shift();
+            const lower = data.toLowerCase();
+            if (
+              lower.includes("not logged in") ||
+              lower.includes("please run /login") ||
+              lower.includes("authentication") ||
+              lower.includes("missing api key")
+            ) {
+              // Surface auth failures promptly instead of waiting for idle timeout.
+              abortController.abort();
+            }
+          }
+        },
+      };
+      if (executable) {
+        queryOptions.pathToClaudeCodeExecutable = executable;
+      }
+
       for await (const message of runner({
         prompt,
-        options: {
-          model,
-          maxTurns: 1,
-          tools: [],
-          allowedTools: [],
-          settingSources: [],
-          // Headless HTTP/CLI: never block waiting for an interactive prompt.
-          permissionMode: "dontAsk",
-          systemPrompt: ANALYZER_SYSTEM_PROMPT,
-          outputFormat: {
-            type: "json_schema",
-            schema: analysisJsonSchema(),
-          },
-          cwd,
-          abortController,
-        },
+        options: queryOptions,
       })) {
         if (abortController.signal.aborted) {
+          const stderrText = stderrChunks.join("");
+          if (/not logged in|please run \/login|api key|unauthorized/i.test(stderrText)) {
+            throw classifyRunnerError(new Error(stderrText.trim() || "Not logged in"));
+          }
           throw timeoutError();
         }
+
+        sawSdkActivity = true;
+        bumpIdleTimer();
+
+        if (message.type === "auth_status") {
+          if (message.isAuthenticating) {
+            await emitProgress(
+              "authenticating",
+              message.output?.join(" ").trim() ||
+                "Authenticating with Anthropic…",
+            );
+          } else if (message.error) {
+            throw classifyRunnerError(new Error(message.error));
+          }
+          continue;
+        }
+
+        if (message.type === "system" && message.subtype === "init") {
+          const source =
+            "apiKeySource" in message && message.apiKeySource
+              ? ` (auth: ${String(message.apiKeySource)})`
+              : "";
+          await emitProgress(
+            "sdk_ready",
+            `Claude CLI ready${source}; waiting for model…`,
+          );
+          continue;
+        }
+
+        if (message.type === "system" && message.subtype === "api_retry") {
+          await emitProgress(
+            "model_running",
+            `API retry ${message.attempt}/${message.max_retries}…`,
+          );
+          continue;
+        }
+
+        if (message.type === "assistant") {
+          await emitProgress("model_running", "Model is generating analysis…");
+          continue;
+        }
+
         if (message.type === "result") {
+          await emitProgress("parsing", "Parsing structured analysis…");
           durationMs = message.duration_ms;
           costUsd =
             typeof message.total_cost_usd === "number"
@@ -483,7 +694,22 @@ export async function analyzeSession(
       runnerResult = await Promise.race([
         consumeRunner(),
         new Promise<never>((_resolve, reject) => {
-          const onAbort = () => reject(timeoutError());
+          const onAbort = () => {
+            const stderrText = stderrChunks.join("");
+            if (
+              /not logged in|please run \/login|api key|unauthorized/i.test(
+                stderrText,
+              )
+            ) {
+              reject(
+                classifyRunnerError(
+                  new Error(stderrText.trim() || "Not logged in"),
+                ),
+              );
+              return;
+            }
+            reject(timeoutError());
+          };
           if (abortController.signal.aborted) {
             onAbort();
             return;
@@ -535,7 +761,7 @@ export async function analyzeSession(
       );
     }
 
-    return {
+    const analysis: SessionAnalysis = {
       sessionId: detail.meta.id,
       summary: parsed.summary,
       findings: parsed.findings.map((f) => ({
@@ -550,7 +776,10 @@ export async function analyzeSession(
       costUsd,
       usedSdkSessionApi,
     };
+    await emitProgress("complete", "Analysis complete.");
+    return analysis;
   } finally {
-    clearTimeout(timer);
+    if (idleTimer) clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
   }
 }

@@ -65,7 +65,13 @@ async function runAnalyze(options: {
 
   const detail = buildSessionDetail(loaded.file, loaded.parsed);
   try {
-    const analysis = await analyzeSession(detail, { model: options.model });
+    const analysis = await analyzeSession(detail, {
+      model: options.model,
+      onProgress: (event) => {
+        const sec = (event.elapsedMs / 1000).toFixed(1);
+        console.error(`[${sec}s] ${event.stage}: ${event.message}`);
+      },
+    });
     console.log(JSON.stringify(analysis, null, 2));
   } catch (err) {
     if (err instanceof AnalyzeSessionError) {

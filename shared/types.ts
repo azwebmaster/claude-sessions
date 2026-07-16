@@ -171,6 +171,50 @@ export interface SessionAnalysis {
   usedSdkSessionApi: boolean;
 }
 
+/** Stages emitted while Agent SDK analysis is running (NDJSON stream). */
+export type AnalyzeProgressStage =
+  | "starting"
+  | "enriching"
+  | "brief_ready"
+  | "query_start"
+  | "authenticating"
+  | "sdk_ready"
+  | "model_running"
+  | "parsing"
+  | "complete";
+
+export interface AnalyzeProgressEvent {
+  type: "progress";
+  stage: AnalyzeProgressStage;
+  message: string;
+  /** Elapsed ms since analyze started */
+  elapsedMs: number;
+}
+
+export interface AnalyzeResultEvent {
+  type: "result";
+  analysis: SessionAnalysis;
+}
+
+export interface AnalyzeErrorEvent {
+  type: "error";
+  error: string;
+  code:
+    | "auth"
+    | "sdk"
+    | "parse"
+    | "empty"
+    | "budget"
+    | "timeout"
+    | "unknown";
+}
+
+/** One line of the analyze NDJSON stream */
+export type AnalyzeStreamEvent =
+  | AnalyzeProgressEvent
+  | AnalyzeResultEvent
+  | AnalyzeErrorEvent;
+
 export interface ContextTimelinePoint {
   turn: number;
   /** Matches the assistant TreeNode.id for hierarchy focus */
