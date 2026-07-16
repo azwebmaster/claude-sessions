@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
 import { Box, Button, Chip, Collapse, Typography } from "@mui/material";
 import type { TokenUsage, TreeNode } from "@shared/types";
@@ -68,16 +68,10 @@ export function HierarchyTree({
         node.kind === "subagent" ||
         node.kind === "tool_call"),
   );
-  const rowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (mustOpen && hasChildren) setOpen(true);
   }, [mustOpen, hasChildren, focusedNodeId]);
-
-  useEffect(() => {
-    if (!isFocused || !rowRef.current) return;
-    rowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [isFocused, focusedNodeId]);
 
   const hasUsage = Boolean(node.usage && totalTokens(node.usage) > 0);
   const usageLabel = hasUsage
@@ -111,7 +105,6 @@ export function HierarchyTree({
 
   return (
     <Box
-      ref={rowRef}
       data-node-id={node.id}
       sx={{
         border: isFocused ? "1px solid" : "1px solid transparent",
