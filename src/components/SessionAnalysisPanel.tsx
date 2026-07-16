@@ -5,6 +5,7 @@ import {
   Button,
   Chip,
   CircularProgress,
+  IconButton,
   LinearProgress,
   Stack,
   ToggleButton,
@@ -23,8 +24,12 @@ import {
   type AnalyzeProgressEvent,
   type AnalyzeProgressStage,
   type SessionAnalysis,
+  type SessionAnalysisRecommendation,
 } from "@shared/types";
-import { formatAnalysisAgentPrompt } from "@shared/formatAnalysisPrompt";
+import {
+  formatAnalysisAgentPrompt,
+  formatAnalysisRecommendation,
+} from "@shared/formatAnalysisPrompt";
 import { EmptyState, SectionPaper } from "./ui";
 import { apiAnalyzeStream, apiGetCachedAnalysis } from "../lib/api";
 import { layout } from "../theme";
@@ -88,6 +93,8 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
+  const [copiedRecIndex, setCopiedRecIndex] = useState<number | null>(null);
+  const [recCopyFailed, setRecCopyFailed] = useState(false);
   const [model, setModel] = useState<AnalyzeModelAlias>(
     DEFAULT_ANALYZE_MODEL_ALIAS,
   );
@@ -95,6 +102,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
   const hydrateAbortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const copyResetRef = useRef<number | null>(null);
+  const recCopyResetRef = useRef<number | null>(null);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -110,6 +118,8 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     setSeenStages([]);
     setElapsedMs(0);
     setCopyState("idle");
+    setCopiedRecIndex(null);
+    setRecCopyFailed(false);
     startedAtRef.current = null;
   }, [sessionId]);
 
@@ -121,6 +131,9 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
       hydrateAbortRef.current = null;
       if (copyResetRef.current != null) {
         window.clearTimeout(copyResetRef.current);
+      }
+      if (recCopyResetRef.current != null) {
+        window.clearTimeout(recCopyResetRef.current);
       }
     };
   }, []);
@@ -188,6 +201,8 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     setSeenStages([]);
     setElapsedMs(0);
     setCopyState("idle");
+    setCopiedRecIndex(null);
+    setRecCopyFailed(false);
     try {
       const result = await apiAnalyzeStream(
         sessionId,
@@ -242,6 +257,30 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     copyResetRef.current = window.setTimeout(() => {
       setCopyState("idle");
       copyResetRef.current = null;
+    }, 2000);
+  };
+
+  const copyRecommendation = async (
+    recommendation: SessionAnalysisRecommendation,
+    index: number,
+  ) => {
+    try {
+      await navigator.clipboard.writeText(
+        formatAnalysisRecommendation(recommendation),
+      );
+      setCopiedRecIndex(index);
+      setRecCopyFailed(false);
+    } catch {
+      setCopiedRecIndex(index);
+      setRecCopyFailed(true);
+    }
+    if (recCopyResetRef.current != null) {
+      window.clearTimeout(recCopyResetRef.current);
+    }
+    recCopyResetRef.current = window.setTimeout(() => {
+      setCopiedRecIndex(null);
+      setRecCopyFailed(false);
+      recCopyResetRef.current = null;
     }, 2000);
   };
 
@@ -596,30 +635,61 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
               </Typography>
             ) : (
               <Stack spacing={1}>
-                {analysis.recommendations.map((rec, index) => (
-                  <Box
-                    key={`${rec.title}-${index}`}
-                    sx={{
-                      border: 1,
-                      borderColor: "divider",
-                      borderRadius: 1,
-                      px: 1.5,
-                      py: 1.25,
-                    }}
-                  >
-                    <Typography variant="subtitle2">{rec.title}</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                      {rec.detail}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="success.main"
-                      sx={{ display: "block", mt: 0.75 }}
+                {analysis.recommendations.map((rec, index) => {
+                  const isCopied = copiedRecIndex === index;
+                  const copyTitle = isCopied
+                    ? recCopyFailed
+                      ? "Copy failed"
+                      : "Copied"
+                    : "Copy suggestion";
+                  return (
+                    <Box
+                      key={`${rec.title}-${index}`}
+                      sx={{
+                        border: 1,
+                        borderColor: "divider",
+                        borderRadius: 1,
+                        px: 1.5,
+                        py: 1.25,
+                      }}
                     >
-                      Impact: {rec.impact}
-                    </Typography>
-                  </Box>
-                ))}
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        sx={{
+                          alignItems: "flex-start",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <Typography variant="subtitle2" sx={{ minWidth: 0, pt: 0.25 }}>
+                          {rec.title}
+                        </Typography>
+                        <Tooltip title={copyTitle}>
+                          <IconButton
+                            size="small"
+                            aria-label={`Copy suggestion: ${rec.title}`}
+                            onClick={() => {
+                              void copyRecommendation(rec, index);
+                            }}
+                            sx={{ mt: -0.5, mr: -0.75 }}
+                          >
+                            <ContentCopyOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                        {rec.detail}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="success.main"
+                        sx={{ display: "block", mt: 0.75 }}
+                      >
+                        Impact: {rec.impact}
+                      </Typography>
+                    </Box>
+                  );
+                })}
               </Stack>
             )}
           </Box>

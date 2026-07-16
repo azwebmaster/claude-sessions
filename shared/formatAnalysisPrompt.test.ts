@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatAnalysisAgentPrompt } from "./formatAnalysisPrompt.js";
+import {
+  formatAnalysisAgentPrompt,
+  formatAnalysisRecommendation,
+} from "./formatAnalysisPrompt.js";
 import type { SessionAnalysis } from "./types.js";
 
 const sample: SessionAnalysis = {
@@ -26,6 +29,20 @@ const sample: SessionAnalysis = {
   costUsd: 0.002,
   usedSdkSessionApi: true,
 };
+
+describe("formatAnalysisRecommendation", () => {
+  it("formats a single suggestion for clipboard copy", () => {
+    const text = formatAnalysisRecommendation(sample.recommendations[0]!);
+    assert.equal(
+      text,
+      [
+        "Summarize before pasting",
+        "Prefer targeted Grep/offset reads over full-file dumps.",
+        "Impact: Cuts peak context by tens of thousands of tokens",
+      ].join("\n"),
+    );
+  });
+});
 
 describe("formatAnalysisAgentPrompt", () => {
   it("builds a paste-ready agent prompt from recommendations", () => {

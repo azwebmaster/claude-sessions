@@ -83,7 +83,7 @@ Analysis runs headlessly (`permissionMode: dontAsk`) with:
 - an **idle** timeout (default 90s without progress, `$CLAUDE_SESSIONS_ANALYZE_IDLE_TIMEOUT_MS`)
 - a **hard** wall-clock cap (default 300s, `$CLAUDE_SESSIONS_ANALYZE_TIMEOUT_MS`)
 
-The UI streams stage progress (brief → CLI start → auth → model → parse), restores cached results when you reopen a session, and can copy recommendations as an agent prompt. Analysis loads user setting sources, passes through the server environment (`HOME`, `PATH`, Anthropic/Claude vars), and prefers a `claude` binary on `PATH` (or `$CLAUDE_SESSIONS_CLAUDE_PATH`) so the same credentials as the interactive CLI are used.
+The UI streams stage progress (brief → CLI start → auth → model → parse), restores cached results when you reopen a session, and can copy each recommendation or the full set as an agent prompt. Analysis loads user setting sources, passes through the server environment (`HOME`, `PATH`, Anthropic/Claude vars), sets `DISABLE_PROMPT_CACHING=1` (single-turn analyze never reads the cache), and prefers a `claude` binary on `PATH` (or `$CLAUDE_SESSIONS_CLAUDE_PATH`) so the same credentials as the interactive CLI are used.
 
 ## Scripts
 

@@ -1,4 +1,22 @@
-import type { SessionAnalysis } from "./types.js";
+import type {
+  SessionAnalysis,
+  SessionAnalysisRecommendation,
+} from "./types.js";
+
+/**
+ * Format one recommendation into a paste-ready suggestion.
+ */
+export function formatAnalysisRecommendation(
+  recommendation: SessionAnalysisRecommendation,
+): string {
+  return [
+    recommendation.title.trim(),
+    recommendation.detail.trim(),
+    `Impact: ${recommendation.impact.trim()}`,
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
 
 /**
  * Format analysis findings/recommendations into a paste-ready agent prompt.
