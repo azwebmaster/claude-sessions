@@ -233,6 +233,10 @@ export function SessionDetailPage() {
             <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
               Tool impact on context
             </Typography>
+            <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
+              Tools ranked by attributed context growth. Click any tool to
+              inspect individual calls, inputs, and result sizes.
+            </Typography>
             <ToolImpactList rows={detail.toolImpact} />
           </Paper>
         </Stack>
