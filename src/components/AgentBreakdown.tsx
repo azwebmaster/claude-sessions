@@ -1,3 +1,4 @@
+import { Box, Stack, Typography } from "@mui/material";
 import type { AgentBreakdownRow } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 
@@ -5,32 +6,58 @@ interface Props {
   rows: AgentBreakdownRow[];
 }
 
+const mono = '"IBM Plex Mono", ui-monospace, monospace';
+
 export function AgentBreakdown({ rows }: Props) {
   if (rows.length === 0) {
-    return <div className="empty">No agents found.</div>;
+    return (
+      <Typography color="text.secondary" align="center" sx={{ py: 2 }}>
+        No agents found.
+      </Typography>
+    );
   }
 
   return (
-    <div className="agent-list">
+    <Stack spacing={1}>
       {rows.map((row) => (
-        <div key={row.agentId} className="agent-row">
-          <div>
-            <div style={{ fontWeight: 600 }}>{row.label}</div>
-            <div className="muted mono" style={{ fontSize: "0.75rem" }}>
+        <Box
+          key={row.agentId}
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            gap: 1,
+            px: 1.25,
+            py: 1,
+            borderRadius: 1.25,
+            bgcolor: "rgba(255, 255, 255, 0.55)",
+            border: "1px solid rgba(16, 32, 24, 0.06)",
+          }}
+        >
+          <Box>
+            <Typography sx={{ fontWeight: 600 }}>{row.label}</Typography>
+            <Typography
+              sx={{
+                color: "text.secondary",
+                fontFamily: mono,
+                fontSize: "0.75rem",
+              }}
+            >
               {row.kind.replace("_", " ")}
               {row.model ? ` · ${row.model.replace(/^claude-/, "")}` : ""}
               {" · "}
               {row.toolCallCount} tools · {row.messageCount} msgs
-            </div>
-          </div>
-          <div className="mono" style={{ textAlign: "right" }}>
-            <div>{formatTokens(totalTokens(row.usage))}</div>
-            <div className="muted" style={{ fontSize: "0.72rem" }}>
+            </Typography>
+          </Box>
+          <Box sx={{ fontFamily: mono, textAlign: "right" }}>
+            <Typography sx={{ fontFamily: "inherit" }}>
+              {formatTokens(totalTokens(row.usage))}
+            </Typography>
+            <Typography sx={{ color: "text.secondary", fontSize: "0.72rem" }}>
               peak {formatTokens(row.peakContextTokens)}
-            </div>
-          </div>
-        </div>
+            </Typography>
+          </Box>
+        </Box>
       ))}
-    </div>
+    </Stack>
   );
 }

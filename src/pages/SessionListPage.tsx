@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  Box,
+  Chip,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from "@mui/material";
 import type { SessionListItem } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { api, formatDate } from "../lib/api";
@@ -9,6 +22,8 @@ interface SessionsResponse {
   roots: string[];
   count: number;
 }
+
+const mono = '"IBM Plex Mono", ui-monospace, monospace';
 
 export function SessionListPage() {
   const navigate = useNavigate();
@@ -50,84 +65,143 @@ export function SessionListPage() {
 
   if (error) {
     return (
-      <div className="panel panel-pad error">
-        Failed to load sessions: {error}
-      </div>
+      <Paper sx={{ p: 2.5 }}>
+        <Typography color="error">Failed to load sessions: {error}</Typography>
+      </Paper>
     );
   }
 
   if (!data) {
-    return <div className="panel panel-pad loading">Scanning session files…</div>;
+    return (
+      <Paper sx={{ p: 2.5 }}>
+        <Typography color="text.secondary" align="center">
+          Scanning session files…
+        </Typography>
+      </Paper>
+    );
   }
 
   return (
-    <section className="hero-list">
-      <div className="panel panel-pad">
-        <div className="toolbar">
-          <div>
-            <strong>{data.count}</strong>{" "}
-            <span className="muted">sessions on this system</span>
-          </div>
-          <input
-            className="search"
+    <Box sx={{ animation: "rise 600ms ease both" }}>
+      <Paper sx={{ p: 2.5 }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1.5}
+          sx={{
+            alignItems: { sm: "center" },
+            justifyContent: "space-between",
+            mb: 2,
+          }}
+        >
+          <Typography>
+            <Box component="strong">{data.count}</Box>{" "}
+            <Box component="span" sx={{ color: "text.secondary" }}>
+              sessions on this system
+            </Box>
+          </Typography>
+          <TextField
+            size="small"
             placeholder="Filter by project, summary, model, branch…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             aria-label="Filter sessions"
+            sx={{
+              flex: "1 1 240px",
+              minWidth: { xs: "100%", sm: 200 },
+              maxWidth: 420,
+              bgcolor: "rgba(255, 255, 255, 0.7)",
+              borderRadius: 1.25,
+            }}
           />
-        </div>
+        </Stack>
 
         {filtered.length === 0 ? (
-          <div className="empty">
+          <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
             No sessions matched. Claude Code stores transcripts under{" "}
-            <span className="mono">~/.claude/projects</span>. Demo fixtures are
-            included so you can explore the UI immediately.
-          </div>
+            <Box component="span" sx={{ fontFamily: mono }}>
+              ~/.claude/projects
+            </Box>
+            . Demo fixtures are included so you can explore the UI immediately.
+          </Typography>
         ) : (
-          <table className="session-table">
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Updated</th>
-                <th>Tokens</th>
-                <th>Peak ctx</th>
-                <th>Tools</th>
-                <th>Agents</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Session</TableCell>
+                <TableCell>Updated</TableCell>
+                <TableCell>Tokens</TableCell>
+                <TableCell>Peak ctx</TableCell>
+                <TableCell>Tools</TableCell>
+                <TableCell>Agents</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {filtered.map((s) => (
-                <tr
+                <TableRow
                   key={`${s.projectEncoded}-${s.id}`}
-                  className="session-row"
+                  hover
+                  sx={{ cursor: "pointer" }}
                   onClick={() => navigate(`/sessions/${s.id}`)}
                 >
-                  <td>
-                    <div className="session-title">
+                  <TableCell>
+                    <Typography sx={{ fontWeight: 600, letterSpacing: "-0.01em" }}>
                       {s.summary ?? "Untitled session"}
-                    </div>
-                    <div className="session-path">{s.projectPath}</div>
-                    <div style={{ marginTop: "0.35rem" }}>
-                      <span className={`pill ${s.source}`}>{s.source}</span>{" "}
+                    </Typography>
+                    <Typography
+                      sx={{
+                        mt: 0.25,
+                        fontFamily: mono,
+                        fontSize: "0.75rem",
+                        color: "text.secondary",
+                      }}
+                    >
+                      {s.projectPath}
+                    </Typography>
+                    <Stack
+                      direction="row"
+                      spacing={0.75}
+                      useFlexGap
+                      sx={{ mt: 0.75, flexWrap: "wrap" }}
+                    >
+                      <Chip
+                        size="small"
+                        label={s.source}
+                        color={s.source === "fixture" ? "info" : "success"}
+                        variant="outlined"
+                      />
                       {s.gitBranch ? (
-                        <span className="pill">{s.gitBranch}</span>
-                      ) : null}{" "}
-                      {s.model ? (
-                        <span className="pill">{s.model.replace(/^claude-/, "")}</span>
+                        <Chip size="small" label={s.gitBranch} variant="outlined" />
                       ) : null}
-                    </div>
-                  </td>
-                  <td className="mono">{formatDate(s.updatedAt)}</td>
-                  <td className="mono">{formatTokens(totalTokens(s.usage))}</td>
-                  <td className="mono">{formatTokens(s.peakContextTokens)}</td>
-                  <td className="mono">{s.toolCallCount}</td>
-                  <td className="mono">{1 + s.subagentCount}</td>
-                </tr>
+                      {s.model ? (
+                        <Chip
+                          size="small"
+                          label={s.model.replace(/^claude-/, "")}
+                          variant="outlined"
+                        />
+                      ) : null}
+                    </Stack>
+                  </TableCell>
+                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
+                    {formatDate(s.updatedAt)}
+                  </TableCell>
+                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
+                    {formatTokens(totalTokens(s.usage))}
+                  </TableCell>
+                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
+                    {formatTokens(s.peakContextTokens)}
+                  </TableCell>
+                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
+                    {s.toolCallCount}
+                  </TableCell>
+                  <TableCell sx={{ fontFamily: mono, fontSize: "0.85rem" }}>
+                    {1 + s.subagentCount}
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </div>
-    </section>
+      </Paper>
+    </Box>
   );
 }
