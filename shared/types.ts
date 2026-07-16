@@ -80,6 +80,20 @@ export interface ContextTimelinePoint {
   toolName: string | null;
 }
 
+/** One tool invocation contributing to context growth */
+export interface ToolImpactCall {
+  toolUseId: string;
+  timestamp: string | null;
+  /** Short summary of the tool input (path, command, query, …) */
+  inputPreview: string | null;
+  /** Truncated tool result text */
+  resultPreview: string | null;
+  resultTokens: number;
+  /** Share of the next context jump attributed to this call */
+  contextGrowthAttributed: number;
+  isError: boolean;
+}
+
 export interface ToolImpactRow {
   toolName: string;
   callCount: number;
@@ -88,6 +102,8 @@ export interface ToolImpactRow {
   maxResultTokens: number;
   /** Sum of context jumps immediately after this tool's results */
   contextGrowthAttributed: number;
+  /** Individual calls, largest result first */
+  calls: ToolImpactCall[];
 }
 
 export interface AgentBreakdownRow {

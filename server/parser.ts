@@ -6,6 +6,7 @@ import type {
   SessionDetail,
   SessionListItem,
   TokenUsage,
+  ToolImpactCall,
   ToolImpactRow,
   TreeNode,
 } from "../shared/types.js";
@@ -118,6 +119,56 @@ function stringifyContent(content: unknown): string {
 
 function estimateResultTokens(block: ContentBlock): number {
   return estimateTokensFromText(stringifyContent(block.content));
+}
+
+function toolInputPreview(
+  name: string,
+  input?: Record<string, unknown>,
+): string | null {
+  if (!input) return null;
+  const pick = (...keys: string[]): string | null => {
+    for (const key of keys) {
+      const value = input[key];
+      if (typeof value === "string" && value.trim()) {
+        return previewText(value, 140);
+      }
+    }
+    return null;
+  };
+
+  switch (name) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "NotebookEdit":
+      return pick("file_path", "path", "notebook_path");
+    case "Bash":
+    case "Shell":
+      return pick("command", "description");
+    case "Grep":
+    case "Glob":
+      return pick("pattern", "glob_pattern", "glob", "path", "query");
+    case "WebSearch":
+    case "WebFetch":
+      return pick("search_term", "query", "url", "explanation");
+    case "Task":
+    case "Agent":
+    case "TaskCreate":
+      return pick("description", "prompt", "subagent_type");
+    default:
+      return (
+        pick(
+          "file_path",
+          "path",
+          "command",
+          "pattern",
+          "query",
+          "url",
+          "description",
+          "prompt",
+        ) ?? previewText(stringifyContent(input), 140)
+      );
+  }
 }
 
 async function readEntries(filePath: string): Promise<RawEntry[]> {
@@ -316,6 +367,32 @@ export async function parseSessionFile(
   };
 }
 
+function ensureToolRow(
+  byTool: Map<
+    string,
+    {
+      callCount: number;
+      totalResultTokens: number;
+      maxResultTokens: number;
+      contextGrowthAttributed: number;
+      calls: ToolImpactCall[];
+    }
+  >,
+  toolName: string,
+) {
+  const existing = byTool.get(toolName);
+  if (existing) return existing;
+  const created = {
+    callCount: 0,
+    totalResultTokens: 0,
+    maxResultTokens: 0,
+    contextGrowthAttributed: 0,
+    calls: [] as ToolImpactCall[],
+  };
+  byTool.set(toolName, created);
+  return created;
+}
+
 function buildToolImpact(
   entries: RawEntry[],
 ): ToolImpactRow[] {
@@ -326,26 +403,34 @@ function buildToolImpact(
       totalResultTokens: number;
       maxResultTokens: number;
       contextGrowthAttributed: number;
+      calls: ToolImpactCall[];
     }
   >();
 
-  const toolNameById = new Map<string, string>();
+  const callMeta = new Map<
+    string,
+    { toolName: string; call: ToolImpactCall }
+  >();
   let lastContext: number | null = null;
-  let pendingTools: { name: string; resultTokens: number }[] = [];
+  let pending: { toolName: string; call: ToolImpactCall }[] = [];
 
   for (const entry of entries) {
     if (entry.type === "assistant") {
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use" && block.id && block.name) {
-          toolNameById.set(block.id, block.name);
-          const row = byTool.get(block.name) ?? {
-            callCount: 0,
-            totalResultTokens: 0,
-            maxResultTokens: 0,
-            contextGrowthAttributed: 0,
-          };
+          const row = ensureToolRow(byTool, block.name);
           row.callCount += 1;
-          byTool.set(block.name, row);
+          const call: ToolImpactCall = {
+            toolUseId: block.id,
+            timestamp: entry.timestamp ?? null,
+            inputPreview: toolInputPreview(block.name, block.input),
+            resultPreview: null,
+            resultTokens: 0,
+            contextGrowthAttributed: 0,
+            isError: false,
+          };
+          row.calls.push(call);
+          callMeta.set(block.id, { toolName: block.name, call });
         }
       }
 
@@ -353,35 +438,61 @@ function buildToolImpact(
       if (totalTokens(u) > 0) {
         const ctx = contextSize(u);
         const growth = lastContext == null ? 0 : Math.max(0, ctx - lastContext);
-        if (growth > 0 && pendingTools.length > 0) {
+        if (growth > 0 && pending.length > 0) {
           const weightSum =
-            pendingTools.reduce((s, t) => s + t.resultTokens, 0) || 1;
-          for (const t of pendingTools) {
-            const share = (t.resultTokens / weightSum) * growth;
-            const row = byTool.get(t.name);
+            pending.reduce((s, p) => s + p.call.resultTokens, 0) || 1;
+          for (const item of pending) {
+            const share = (item.call.resultTokens / weightSum) * growth;
+            item.call.contextGrowthAttributed += share;
+            const row = byTool.get(item.toolName);
             if (row) row.contextGrowthAttributed += share;
           }
         }
         lastContext = ctx;
-        pendingTools = [];
+        pending = [];
       }
     }
 
     if (entry.type === "user") {
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type !== "tool_result" || !block.tool_use_id) continue;
-        const name = toolNameById.get(block.tool_use_id) ?? "unknown";
         const resultTokens = estimateResultTokens(block);
-        const row = byTool.get(name) ?? {
-          callCount: 0,
-          totalResultTokens: 0,
-          maxResultTokens: 0,
-          contextGrowthAttributed: 0,
-        };
-        row.totalResultTokens += resultTokens;
-        row.maxResultTokens = Math.max(row.maxResultTokens, resultTokens);
-        byTool.set(name, row);
-        pendingTools.push({ name, resultTokens });
+        const resultPreview = previewText(
+          stringifyContent(block.content),
+          220,
+        );
+        const meta = callMeta.get(block.tool_use_id);
+        if (meta) {
+          meta.call.resultTokens = resultTokens;
+          meta.call.resultPreview = resultPreview;
+          meta.call.isError = Boolean(block.is_error);
+          if (!meta.call.timestamp && entry.timestamp) {
+            meta.call.timestamp = entry.timestamp;
+          }
+          const row = byTool.get(meta.toolName);
+          if (row) {
+            row.totalResultTokens += resultTokens;
+            row.maxResultTokens = Math.max(row.maxResultTokens, resultTokens);
+          }
+          pending.push(meta);
+        } else {
+          const toolName = "unknown";
+          const row = ensureToolRow(byTool, toolName);
+          row.callCount += 1;
+          row.totalResultTokens += resultTokens;
+          row.maxResultTokens = Math.max(row.maxResultTokens, resultTokens);
+          const call: ToolImpactCall = {
+            toolUseId: block.tool_use_id,
+            timestamp: entry.timestamp ?? null,
+            inputPreview: null,
+            resultPreview,
+            resultTokens,
+            contextGrowthAttributed: 0,
+            isError: Boolean(block.is_error),
+          };
+          row.calls.push(call);
+          pending.push({ toolName, call });
+        }
       }
     }
   }
@@ -397,8 +508,22 @@ function buildToolImpact(
           : 0,
       maxResultTokens: row.maxResultTokens,
       contextGrowthAttributed: Math.round(row.contextGrowthAttributed),
+      calls: row.calls
+        .map((c) => ({
+          ...c,
+          contextGrowthAttributed: Math.round(c.contextGrowthAttributed),
+        }))
+        .sort(
+          (a, b) =>
+            b.contextGrowthAttributed - a.contextGrowthAttributed ||
+            b.resultTokens - a.resultTokens,
+        ),
     }))
-    .sort((a, b) => b.totalResultTokens - a.totalResultTokens);
+    .sort(
+      (a, b) =>
+        b.contextGrowthAttributed - a.contextGrowthAttributed ||
+        b.totalResultTokens - a.totalResultTokens,
+    );
 }
 
 function buildTimeline(entries: RawEntry[]): ContextTimelinePoint[] {

@@ -47,7 +47,21 @@ describe("fixture session parse", () => {
 
     assert.equal(detail.tree.kind, "root_agent");
     assert.ok(detail.timeline.length >= 1);
-    assert.ok(detail.toolImpact.some((t) => t.toolName === "Read"));
+    const readImpact = detail.toolImpact.find((t) => t.toolName === "Read");
+    assert.ok(readImpact);
+    assert.ok(readImpact.callCount >= 1);
+    assert.ok(readImpact.calls.length >= 1);
+    assert.ok(
+      readImpact.calls.every(
+        (c) => typeof c.toolUseId === "string" && c.toolUseId.length > 0,
+      ),
+    );
+    assert.ok(
+      detail.toolImpact[0].contextGrowthAttributed >=
+        detail.toolImpact[detail.toolImpact.length - 1]
+          .contextGrowthAttributed ||
+        detail.toolImpact.every((t) => t.contextGrowthAttributed === 0),
+    );
     assert.ok(detail.agentBreakdown.some((a) => a.kind === "subagent"));
     assert.ok(contextSize(detail.meta.usage) > 0);
   });
