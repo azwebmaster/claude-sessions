@@ -167,7 +167,7 @@ Timeline bars use `chartBarColors(theme)` gradients. Selected bar uses `warning`
 
 ### Agent ↔ tool diagram
 
-`AgentToolDiagram` is an interactive scatter SVG: agents and tools are positioned in opposing bands with jitter, and curved arrows show call flow (stroke weight = call volume). Support pan, wheel/+/− zoom, and drag-to-rearrange; include a reset control that restores the scatter layout and fit-to-view. Use `nodeKindStyle` for node accents and `focusHighlight` when an agent or tool is selected. Cap displayed tools (top N by volume) so dense sessions stay readable; note hidden tool count in the caption.
+`AgentToolDiagram` is an interactive radial SVG: the root agent sits at the center, subagents on an inner ring, and tools on an expanded outer ring. Nodes are circles sized by context (peak context for agents, attributed context growth for tools). Curved arrows show call flow (stroke weight = call volume). Support pan, wheel/+/− zoom, and drag-to-rearrange; include a reset control that restores the radial layout and fit-to-view. Use `nodeKindStyle` for node accents and `focusHighlight` when an agent or tool is selected. Cap displayed tools (top N by volume) so dense sessions stay readable; note hidden tool count in the caption.
 
 ## Adding new UI
 
