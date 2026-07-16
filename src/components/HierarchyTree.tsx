@@ -122,6 +122,8 @@ export function HierarchyTree({
             : "transparent",
         boxShadow: isFocused ? highlight.boxShadow : "none",
         transition: "border-color 150ms ease, background 150ms ease, box-shadow 150ms ease",
+        minWidth: 0,
+        maxWidth: "100%",
         "&:hover": {
           borderColor: isFocused ? highlight.borderColor : "divider",
           bgcolor: isFocused
@@ -155,12 +157,24 @@ export function HierarchyTree({
         }
         body={
           <Box>
-            <Typography variant="subtitle2" sx={{ fontSize: "0.9rem" }}>
+            <Typography variant="subtitle2" sx={{ fontSize: { xs: "0.85rem", sm: "0.9rem" }, wordBreak: "break-word" }}>
               {hasChildren ? (open ? "▾ " : "▸ ") : ""}
               {node.label}
             </Typography>
             {node.preview ? (
-              <Typography color="text.secondary" sx={{ mt: 0.25, fontSize: "0.78rem", lineHeight: 1.35 }}>
+              <Typography
+                color="text.secondary"
+                sx={{
+                  mt: 0.25,
+                  fontSize: "0.78rem",
+                  lineHeight: 1.35,
+                  wordBreak: "break-word",
+                  display: "-webkit-box",
+                  WebkitLineClamp: { xs: 3, sm: 4 },
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
                 {node.preview}
               </Typography>
             ) : null}
@@ -173,9 +187,9 @@ export function HierarchyTree({
               fontFamily: theme.typography.mono?.fontFamily,
               fontSize: "0.72rem",
               color: "text.secondary",
-              textAlign: "right",
-              whiteSpace: "nowrap",
-              maxWidth: { xs: "9.5rem", sm: "14rem" },
+              textAlign: { xs: "left", sm: "right" },
+              whiteSpace: { xs: "normal", sm: "nowrap" },
+              maxWidth: { xs: "100%", sm: "14rem" },
             }}
           >
             {usageLabel ? <div>{usageLabel}</div> : null}
@@ -208,15 +222,16 @@ export function HierarchyTree({
       <Collapse in={open && hasChildren}>
         <Box
           sx={{
-            mx: 0.75,
+            mx: { xs: 0.25, sm: 0.75 },
             mb: 0.75,
-            ml: 2,
-            pl: 1.25,
+            ml: { xs: 0.75, sm: 2 },
+            pl: { xs: 0.75, sm: 1.25 },
             borderLeft: 2,
             borderColor: "divider",
             display: "flex",
             flexDirection: "column",
             gap: 0.5,
+            minWidth: 0,
           }}
         >
           {node.children.map((child) => (

@@ -7,10 +7,13 @@ export const monoFontFamily =
 
 export const layout = {
   maxWidth: 1280,
-  pagePaddingX: 2,
-  pagePaddingY: 3,
-  sectionPadding: 2.5,
-  sectionGap: 2,
+  /** Horizontal page inset (spacing units). Tighter on phones. */
+  pagePaddingX: { xs: 1.25, sm: 2, md: 2.5 } as const,
+  pagePaddingY: { xs: 2, sm: 2.5, md: 3 } as const,
+  sectionPadding: { xs: 1.5, sm: 2, md: 2.5 } as const,
+  sectionGap: { xs: 1.5, sm: 2 } as const,
+  /** Breakpoint at which tabular session list replaces stacked cards. */
+  tableMinBreakpoint: "md" as const,
 } as const;
 
 export const motion = {

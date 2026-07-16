@@ -39,18 +39,22 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "1fr auto",
-        gap: 1,
-        px: 1.25,
+        gridTemplateColumns: {
+          xs: "minmax(0, 1fr)",
+          sm: "minmax(0, 1fr) auto",
+        },
+        gap: { xs: 0.75, sm: 1 },
+        px: { xs: 1, sm: 1.25 },
         py: 1,
         borderRadius: 1,
         bgcolor: "background.paper",
         border: 1,
         borderColor: "divider",
+        minWidth: 0,
       }}
     >
       <Box sx={{ minWidth: 0 }}>
-        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 0.25 }}>
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 0.25, flexWrap: "wrap" }}>
           <Typography variant="mono" color="text.secondary" sx={{ fontSize: "0.72rem" }}>
             {shortId(call.toolUseId)}
           </Typography>
@@ -82,15 +86,27 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
           </Typography>
         ) : null}
       </Box>
-      <Box sx={{ textAlign: "right", whiteSpace: "nowrap" }}>
-        <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
-          {formatTokens(call.resultTokens)}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          result
-        </Typography>
+      <Box
+        sx={{
+          textAlign: { xs: "left", sm: "right" },
+          whiteSpace: "nowrap",
+          display: "flex",
+          flexDirection: { xs: "row", sm: "column" },
+          flexWrap: "wrap",
+          alignItems: { xs: "baseline", sm: "flex-end" },
+          gap: { xs: 1, sm: 0 },
+        }}
+      >
+        <Box>
+          <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+            {formatTokens(call.resultTokens)}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: { xs: "inline", sm: "block" }, ml: { xs: 0.5, sm: 0 } }}>
+            result
+          </Typography>
+        </Box>
         {call.contextGrowthAttributed > 0 ? (
-          <Typography color="error.main" sx={{ fontSize: "0.72rem", mt: 0.5 }}>
+          <Typography color="error.main" sx={{ fontSize: "0.72rem", mt: { sm: 0.5 } }}>
             +{formatTokens(call.contextGrowthAttributed)} ctx
           </Typography>
         ) : null}
@@ -251,7 +267,11 @@ export function ToolImpactList({ rows }: Props) {
                     {open ? "▾ " : "▸ "}
                     {row.toolName}
                   </Typography>
-                  <Typography variant="mono" color="text.secondary" sx={{ fontSize: "0.75rem" }}>
+                  <Typography
+                    variant="mono"
+                    color="text.secondary"
+                    sx={{ fontSize: "0.75rem", wordBreak: "break-word", lineHeight: 1.35 }}
+                  >
                     {row.callCount} calls · avg {formatTokens(row.avgResultTokens)} ·
                     max {formatTokens(row.maxResultTokens)}
                     {growthShare > 0 ? ` · ${growthShare}% growth` : ""}
@@ -266,7 +286,7 @@ export function ToolImpactList({ rows }: Props) {
                 </Box>
               }
               trailing={
-                <Box sx={{ textAlign: "right" }}>
+                <Box sx={{ textAlign: { xs: "left", sm: "right" } }}>
                   {row.contextGrowthAttributed > 0 ? (
                     <>
                       <Typography

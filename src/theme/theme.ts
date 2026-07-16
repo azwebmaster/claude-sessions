@@ -38,8 +38,19 @@ const sharedShape = {
 const sharedComponents = {
   MuiCssBaseline: {
     styleOverrides: {
+      html: {
+        // Avoid sideways page scroll from nested wide content.
+        overflowX: "clip",
+      },
       body: {
         ...keyframes,
+        overflowX: "clip",
+        // Touch-friendly default; dense tables/trees still use smaller targets.
+        WebkitTextSizeAdjust: "100%",
+      },
+      "#root": {
+        minWidth: 0,
+        maxWidth: "100%",
       },
     },
   },

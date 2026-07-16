@@ -120,30 +120,42 @@ export function SessionDetailPage() {
   const { meta } = detail;
 
   return (
-    <Box>
+    <Box sx={{ minWidth: 0, maxWidth: "100%" }}>
       {backLink}
 
       <Stack
-        direction={{ xs: "column", md: "row" }}
+        direction={{ xs: "column", lg: "row" }}
         spacing={layout.sectionGap}
         sx={{
           justifyContent: "space-between",
           mb: layout.sectionGap,
           animation: motion.rise,
+          minWidth: 0,
         }}
       >
-        <Box>
+        <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
           <Typography
             variant="h1"
             sx={{
               m: 0,
-              fontSize: { xs: "1.35rem", md: "1.9rem" },
+              fontSize: { xs: "1.2rem", sm: "1.45rem", md: "1.9rem" },
               maxWidth: "40rem",
+              wordBreak: "break-word",
+              lineHeight: 1.25,
             }}
           >
             {meta.summary ?? "Untitled session"}
           </Typography>
-          <Typography variant="mono" color="text.secondary" sx={{ mt: 0.5, fontSize: "0.78rem" }}>
+          <Typography
+            variant="mono"
+            color="text.secondary"
+            sx={{
+              mt: 0.5,
+              fontSize: { xs: "0.7rem", sm: "0.78rem" },
+              wordBreak: "break-word",
+              lineHeight: 1.4,
+            }}
+          >
             {meta.projectPath}
             {meta.gitBranch ? ` · ${meta.gitBranch}` : ""}
             {" · "}
@@ -182,8 +194,13 @@ export function SessionDetailPage() {
             gridTemplateColumns: {
               xs: "repeat(2, minmax(0, 1fr))",
               sm: "repeat(4, minmax(0, 1fr))",
+              lg: "repeat(2, minmax(0, 1fr))",
+              xl: "repeat(4, minmax(0, 1fr))",
             },
             gap: 0.75,
+            flex: { lg: "0 1 22rem", xl: "0 1 28rem" },
+            width: { xs: "100%", lg: "auto" },
+            minWidth: 0,
           }}
         >
           <StatCard label="Total tokens" value={formatTokens(totalTokens(meta.usage))} />
@@ -215,9 +232,11 @@ export function SessionDetailPage() {
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "1.15fr 0.85fr" },
+          gridTemplateColumns: { xs: "1fr", lg: "1.15fr 0.85fr" },
           gap: layout.sectionGap,
           animation: motion.rise,
+          minWidth: 0,
+          alignItems: "start",
         }}
       >
         <SectionPaper
@@ -229,9 +248,12 @@ export function SessionDetailPage() {
               display: "flex",
               flexDirection: "column",
               gap: 0.5,
-              maxHeight: "70vh",
+              maxHeight: { xs: "55vh", sm: "65vh", md: "70vh" },
               overflow: "auto",
+              overscrollBehavior: "contain",
+              WebkitOverflowScrolling: "touch",
               pr: 0.5,
+              minWidth: 0,
             }}
           >
             <HierarchyTree
@@ -244,7 +266,7 @@ export function SessionDetailPage() {
           </Box>
         </SectionPaper>
 
-        <Stack spacing={layout.sectionGap}>
+        <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
           <SectionPaper title="Agents">
             <AgentBreakdown rows={detail.agentBreakdown} />
           </SectionPaper>
