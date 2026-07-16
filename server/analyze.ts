@@ -7,6 +7,7 @@ import {
   type SDKSessionInfo,
   type SessionMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { existsSync } from "node:fs";
 import { z } from "zod";
 import type {
   SessionAnalysis,
@@ -16,6 +17,56 @@ import { formatTokens, totalTokens } from "../shared/types.js";
 
 const DEFAULT_ANALYZE_MODEL =
   process.env.CLAUDE_SESSIONS_ANALYZE_MODEL ?? "claude-haiku-4-5";
+
+/** Wall-clock budget for one analyze run (SDK spawn + model). */
+const DEFAULT_ANALYZE_TIMEOUT_MS = Number(
+  process.env.CLAUDE_SESSIONS_ANALYZE_TIMEOUT_MS ?? 120_000,
+);
+
+/** Cap how long SDK session-file APIs may block before we proceed profile-only. */
+const SDK_EXTRAS_TIMEOUT_MS = 8_000;
+
+/**
+ * Prefer the session project path when it still exists; otherwise fall back so
+ * the Agent SDK does not spawn with a missing cwd (which can hang or fail oddly).
+ */
+export function resolveAnalyzeCwd(projectPath: string | null | undefined): string {
+  if (projectPath && existsSync(projectPath)) return projectPath;
+  return process.cwd();
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) {
+    return Promise.reject(new Error(`${label} aborted`));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error(`${label} aborted`));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
 
 export const analysisOutputSchema = z.object({
   summary: z.string(),
@@ -225,6 +276,12 @@ const defaultRunner: AgentQueryRunner = (params) => query(params);
 
 export interface AnalyzeSessionOptions {
   model?: string;
+  /** Wall-clock timeout for the full analyze run. */
+  timeoutMs?: number;
+  /** Cap for SDK getSessionInfo/getSessionMessages enrichment. */
+  extrasTimeoutMs?: number;
+  /** Optional external abort; analyze also aborts itself on timeout. */
+  abortController?: AbortController;
   /** Injected for tests; defaults to Agent SDK `query`. */
   runner?: AgentQueryRunner;
   /** Injected for tests; defaults to `loadSdkSessionExtras`. */
@@ -243,6 +300,7 @@ export class AnalyzeSessionError extends Error {
       | "parse"
       | "empty"
       | "budget"
+      | "timeout"
       | "unknown" = "unknown",
   ) {
     super(message);
@@ -257,12 +315,16 @@ function classifyRunnerError(err: unknown): AnalyzeSessionError {
     lower.includes("api key") ||
     lower.includes("authentication") ||
     lower.includes("unauthorized") ||
-    lower.includes("not logged in")
+    lower.includes("not logged in") ||
+    lower.includes("please run /login")
   ) {
     return new AnalyzeSessionError(
       "Claude Agent SDK is not authenticated. Set ANTHROPIC_API_KEY or run `claude auth login`.",
       "auth",
     );
+  }
+  if (lower.includes("aborted") || lower.includes("timed out")) {
+    return new AnalyzeSessionError(message, "timeout");
   }
   return new AnalyzeSessionError(message, "sdk");
 }
@@ -270,6 +332,9 @@ function classifyRunnerError(err: unknown): AnalyzeSessionError {
 /**
  * Profile a session with the Claude Agent SDK: enrich via session APIs,
  * then run a single-turn structured `query()` for optimization advice.
+ *
+ * Always bounds the run with an AbortController timeout — the Agent SDK can
+ * hang forever when the CLI subprocess fails to start or never yields.
  */
 export async function analyzeSession(
   detail: SessionDetail,
@@ -278,112 +343,214 @@ export async function analyzeSession(
   const model = options.model ?? DEFAULT_ANALYZE_MODEL;
   const runner = options.runner ?? defaultRunner;
   const loadExtras = options.loadExtras ?? loadSdkSessionExtras;
-
-  const extras = await loadExtras(detail.meta.id, detail.meta.projectPath);
-  const usedSdkSessionApi = Boolean(
-    extras.info || (extras.messages && extras.messages.length > 0),
+  const timeoutMs =
+    options.timeoutMs ??
+    (Number.isFinite(DEFAULT_ANALYZE_TIMEOUT_MS) &&
+    DEFAULT_ANALYZE_TIMEOUT_MS > 0
+      ? DEFAULT_ANALYZE_TIMEOUT_MS
+      : 120_000);
+  const extrasTimeoutMs = Math.min(
+    options.extrasTimeoutMs ?? SDK_EXTRAS_TIMEOUT_MS,
+    timeoutMs,
   );
-  const prompt = buildAnalysisBrief(detail, extras);
+  const abortController = options.abortController ?? new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeoutMs);
 
-  let resultText: string | null = null;
-  let structured: unknown;
-  let durationMs = 0;
-  let costUsd: number | null = null;
-  let usedModel: string | null = model;
+  const timeoutError = () =>
+    new AnalyzeSessionError(
+      `Analysis timed out after ${timeoutMs}ms. The Agent SDK may be waiting on auth, a stuck CLI subprocess, or a network stall. Set ANTHROPIC_API_KEY (or run \`claude auth login\`) and retry.`,
+      "timeout",
+    );
 
   try {
-    for await (const message of runner({
-      prompt,
-      options: {
-        model,
-        maxTurns: 1,
-        tools: [],
-        allowedTools: [],
-        settingSources: [],
-        systemPrompt: ANALYZER_SYSTEM_PROMPT,
-        outputFormat: {
-          type: "json_schema",
-          schema: analysisJsonSchema(),
+    let extras: SdkSessionExtras = { info: null, messages: [] };
+    try {
+      extras = await withTimeout(
+        loadExtras(detail.meta.id, detail.meta.projectPath),
+        extrasTimeoutMs,
+        "SDK session APIs",
+        abortController.signal,
+      );
+    } catch {
+      // Proceed with profiler-only brief if session APIs stall or fail.
+      extras = { info: null, messages: [] };
+    }
+
+    if (timedOut || abortController.signal.aborted) {
+      throw timeoutError();
+    }
+
+    const usedSdkSessionApi = Boolean(
+      extras.info || (extras.messages && extras.messages.length > 0),
+    );
+    const prompt = buildAnalysisBrief(detail, extras);
+    const cwd = resolveAnalyzeCwd(detail.meta.projectPath);
+
+    const usedModel: string | null = model;
+
+    const consumeRunner = async (): Promise<{
+      resultText: string | null;
+      structured: unknown;
+      durationMs: number;
+      costUsd: number | null;
+    }> => {
+      let resultText: string | null = null;
+      let structured: unknown;
+      let durationMs = 0;
+      let costUsd: number | null = null;
+
+      for await (const message of runner({
+        prompt,
+        options: {
+          model,
+          maxTurns: 1,
+          tools: [],
+          allowedTools: [],
+          settingSources: [],
+          // Headless HTTP/CLI: never block waiting for an interactive prompt.
+          permissionMode: "dontAsk",
+          systemPrompt: ANALYZER_SYSTEM_PROMPT,
+          outputFormat: {
+            type: "json_schema",
+            schema: analysisJsonSchema(),
+          },
+          cwd,
+          abortController,
         },
-        cwd: detail.meta.projectPath || process.cwd(),
-      },
-    })) {
-      if (message.type === "result") {
-        durationMs = message.duration_ms;
-        costUsd =
-          typeof message.total_cost_usd === "number"
-            ? message.total_cost_usd
-            : null;
-        if (message.subtype === "success") {
-          resultText = message.result;
-          structured = message.structured_output;
-        } else {
-          const errors =
-            "errors" in message && Array.isArray(message.errors)
-              ? message.errors.join("; ")
-              : message.subtype;
-          if (message.subtype === "error_max_budget_usd") {
+      })) {
+        if (abortController.signal.aborted) {
+          throw timeoutError();
+        }
+        if (message.type === "result") {
+          durationMs = message.duration_ms;
+          costUsd =
+            typeof message.total_cost_usd === "number"
+              ? message.total_cost_usd
+              : null;
+          if (message.subtype === "success") {
+            resultText =
+              typeof message.result === "string" ? message.result : null;
+            structured = message.structured_output;
+            // SDK may yield subtype "success" with is_error for auth failures.
+            if (
+              "is_error" in message &&
+              message.is_error &&
+              (structured === undefined || structured === null)
+            ) {
+              throw classifyRunnerError(
+                new Error(
+                  resultText?.trim()
+                    ? resultText
+                    : "Agent SDK returned an error result",
+                ),
+              );
+            }
+          } else {
+            const errors =
+              "errors" in message && Array.isArray(message.errors)
+                ? message.errors.join("; ")
+                : message.subtype;
+            if (message.subtype === "error_max_budget_usd") {
+              throw new AnalyzeSessionError(
+                `Analysis stopped: budget exceeded (${errors})`,
+                "budget",
+              );
+            }
             throw new AnalyzeSessionError(
-              `Analysis stopped: budget exceeded (${errors})`,
-              "budget",
+              `Agent SDK analysis failed: ${errors}`,
+              "sdk",
             );
           }
-          throw new AnalyzeSessionError(
-            `Agent SDK analysis failed: ${errors}`,
-            "sdk",
-          );
         }
       }
-    }
-  } catch (err) {
-    if (err instanceof AnalyzeSessionError) throw err;
-    throw classifyRunnerError(err);
-  }
 
-  let parsed: AnalysisOutput;
-  try {
-    if (structured !== undefined && structured !== null) {
-      parsed = parseAnalysisOutput(structured);
-    } else if (resultText) {
-      const trimmed = resultText.trim();
-      const jsonSlice =
-        trimmed.startsWith("{")
+      return { resultText, structured, durationMs, costUsd };
+    };
+
+    let runnerResult: {
+      resultText: string | null;
+      structured: unknown;
+      durationMs: number;
+      costUsd: number | null;
+    };
+    try {
+      // Race against abort: Agent SDK can hang in for-await when the CLI
+      // subprocess never starts (never yields / never rejects).
+      runnerResult = await Promise.race([
+        consumeRunner(),
+        new Promise<never>((_resolve, reject) => {
+          const onAbort = () => reject(timeoutError());
+          if (abortController.signal.aborted) {
+            onAbort();
+            return;
+          }
+          abortController.signal.addEventListener("abort", onAbort, {
+            once: true,
+          });
+        }),
+      ]);
+    } catch (err) {
+      if (err instanceof AnalyzeSessionError) throw err;
+      if (timedOut || abortController.signal.aborted) {
+        throw timeoutError();
+      }
+      throw classifyRunnerError(err);
+    }
+
+    if (timedOut || abortController.signal.aborted) {
+      throw timeoutError();
+    }
+
+    const { resultText, structured, durationMs, costUsd } = runnerResult;
+
+    let parsed: AnalysisOutput;
+    try {
+      if (structured !== undefined && structured !== null) {
+        parsed = parseAnalysisOutput(structured);
+      } else if (resultText) {
+        const trimmed = resultText.trim();
+        const jsonSlice = trimmed.startsWith("{")
           ? trimmed
           : trimmed.match(/\{[\s\S]*\}/)?.[0];
-      if (!jsonSlice) {
+        if (!jsonSlice) {
+          // Plain-text auth / login messages often land here.
+          throw classifyRunnerError(new Error(trimmed));
+        }
+        parsed = parseAnalysisOutput(JSON.parse(jsonSlice));
+      } else {
         throw new AnalyzeSessionError(
-          "Agent returned no structured analysis output.",
+          "Agent returned no analysis result.",
           "empty",
         );
       }
-      parsed = parseAnalysisOutput(JSON.parse(jsonSlice));
-    } else {
+    } catch (err) {
+      if (err instanceof AnalyzeSessionError) throw err;
       throw new AnalyzeSessionError(
-        "Agent returned no analysis result.",
-        "empty",
+        `Could not parse analysis output: ${err instanceof Error ? err.message : String(err)}`,
+        "parse",
       );
     }
-  } catch (err) {
-    if (err instanceof AnalyzeSessionError) throw err;
-    throw new AnalyzeSessionError(
-      `Could not parse analysis output: ${err instanceof Error ? err.message : String(err)}`,
-      "parse",
-    );
-  }
 
-  return {
-    sessionId: detail.meta.id,
-    summary: parsed.summary,
-    findings: parsed.findings.map((f) => ({
-      severity: f.severity,
-      title: f.title,
-      detail: f.detail,
-      relatedTool: f.relatedTool ?? null,
-    })),
-    recommendations: parsed.recommendations,
-    model: usedModel,
-    durationMs,
-    costUsd,
-    usedSdkSessionApi,
-  };
+    return {
+      sessionId: detail.meta.id,
+      summary: parsed.summary,
+      findings: parsed.findings.map((f) => ({
+        severity: f.severity,
+        title: f.title,
+        detail: f.detail,
+        relatedTool: f.relatedTool ?? null,
+      })),
+      recommendations: parsed.recommendations,
+      model: usedModel,
+      durationMs,
+      costUsd,
+      usedSdkSessionApi,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }

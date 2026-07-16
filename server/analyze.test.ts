@@ -7,6 +7,7 @@ import {
   analyzeSession,
   buildAnalysisBrief,
   parseAnalysisOutput,
+  resolveAnalyzeCwd,
   AnalyzeSessionError,
 } from "./analyze.js";
 import { buildSessionDetail, parseSessionFile } from "./parser.js";
@@ -180,5 +181,124 @@ describe("analyzeSession", () => {
       (err: unknown) =>
         err instanceof AnalyzeSessionError && err.code === "auth",
     );
+  });
+
+  it("surfaces auth when the SDK yields a success result with is_error", async () => {
+    const detail = await loadFixtureDetail();
+    await assert.rejects(
+      () =>
+        analyzeSession(detail, {
+          loadExtras: async () => ({ info: null, messages: [] }),
+          runner: async function* () {
+            yield {
+              type: "result",
+              subtype: "success",
+              duration_ms: 10,
+              duration_api_ms: 10,
+              is_error: true,
+              num_turns: 1,
+              result: "Not logged in · Please run /login",
+              stop_reason: "end_turn",
+              total_cost_usd: 0,
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+              modelUsage: {},
+              permission_denials: [],
+              uuid: "00000000-0000-0000-0000-000000000002",
+              session_id: "analysis-session",
+            } as unknown as SDKMessage;
+          },
+        }),
+      (err: unknown) =>
+        err instanceof AnalyzeSessionError && err.code === "auth",
+    );
+  });
+
+  it("times out when the Agent SDK runner never yields", async () => {
+    const detail = await loadFixtureDetail();
+    await assert.rejects(
+      () =>
+        analyzeSession(detail, {
+          timeoutMs: 50,
+          loadExtras: async () => ({ info: null, messages: [] }),
+          runner: async function* ({ options }) {
+            // Simulate the known SDK hang until abortController fires.
+            const signal = options?.abortController?.signal;
+            await new Promise<void>((_resolve, reject) => {
+              const onAbort = () => reject(new Error("aborted"));
+              if (signal?.aborted) {
+                onAbort();
+                return;
+              }
+              signal?.addEventListener("abort", onAbort, { once: true });
+            });
+            yield undefined as never;
+          },
+        }),
+      (err: unknown) =>
+        err instanceof AnalyzeSessionError && err.code === "timeout",
+    );
+  });
+
+  it("continues when loadExtras hangs past its budget", async () => {
+    const detail = await loadFixtureDetail();
+    const analysis = await analyzeSession(detail, {
+      timeoutMs: 5_000,
+      extrasTimeoutMs: 40,
+      loadExtras: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return {
+          info: {
+            sessionId: detail.meta.id,
+            summary: "should not be used",
+          } as never,
+          messages: [],
+        };
+      },
+      runner: async function* () {
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 5,
+          duration_api_ms: 5,
+          is_error: false,
+          num_turns: 1,
+          result: "",
+          stop_reason: "end_turn",
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          structured_output: {
+            summary: "Profile-only brief still works.",
+            findings: [],
+            recommendations: [],
+          },
+          uuid: "00000000-0000-0000-0000-000000000003",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+      },
+    });
+    assert.match(analysis.summary, /Profile-only/);
+    assert.equal(analysis.usedSdkSessionApi, false);
+  });
+});
+
+describe("resolveAnalyzeCwd", () => {
+  it("falls back when the project path is missing", () => {
+    assert.equal(resolveAnalyzeCwd("/definitely/does/not/exist-xyz"), process.cwd());
+  });
+
+  it("uses an existing project path", () => {
+    assert.equal(resolveAnalyzeCwd(process.cwd()), process.cwd());
   });
 });
