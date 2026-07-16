@@ -12,12 +12,24 @@ import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import RemoveIcon from "@mui/icons-material/Remove";
 import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
 import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
-import { Box, Button, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  Stack,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import type { AgentBreakdownRow, ToolImpactRow } from "@shared/types";
-import { formatTokens } from "@shared/types";
+import { formatTokens, totalTokens } from "@shared/types";
 import { focusHighlight, motion, nodeKindStyle } from "../theme";
 import { EmptyState } from "./ui";
+
+/** How agent circle radii are derived. Tools stay on attributed growth. */
+export type AgentSizeMetric = "peakContext" | "totalTokens";
 
 interface Props {
   rows: AgentBreakdownRow[];
@@ -46,11 +58,12 @@ interface LaidOutNode {
   sublabel: string;
   kind: "agent" | "tool";
   agentKind?: "root_agent" | "subagent";
-  /** Normalized 0–1 weight used for circle radius (context-based). */
-  contextWeight: number;
+  /** Normalized 0–1 weight used for circle radius. */
+  sizeWeight: number;
   /** Pixel radius of the node circle. */
   radius: number;
-  contextTokens: number;
+  /** Token count shown in the sublabel (metric-dependent for agents). */
+  sizeTokens: number;
 }
 
 interface ViewTransform {
@@ -264,6 +277,8 @@ export function AgentToolDiagram({
   const movedRef = useRef(false);
 
   const [showAllTools, setShowAllTools] = useState(false);
+  const [agentSizeMetric, setAgentSizeMetric] =
+    useState<AgentSizeMetric>("peakContext");
 
   const toolContextByName = useMemo(() => {
     const map = new Map<string, number>();
@@ -272,6 +287,9 @@ export function AgentToolDiagram({
     }
     return map;
   }, [toolImpact]);
+
+  const agentSizeCaption =
+    agentSizeMetric === "peakContext" ? "peak context" : "total tokens";
 
   const {
     links,
@@ -310,7 +328,12 @@ export function AgentToolDiagram({
         : ranked.slice(0, COLLAPSED_MAX_TOOLS);
     const visibleNames = new Set(visible.map((t) => t.toolName));
 
-    const maxAgentCtx = Math.max(...rows.map((r) => r.peakContextTokens), 1);
+    const agentSizeValues = rows.map((r) =>
+      agentSizeMetric === "peakContext"
+        ? r.peakContextTokens
+        : totalTokens(r.usage),
+    );
+    const maxAgentSize = Math.max(...agentSizeValues, 1);
     const toolCtxValues = visible.map(
       (t) => toolContextByName.get(t.toolName) ?? 0,
     );
@@ -319,22 +342,23 @@ export function AgentToolDiagram({
     const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
     const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
 
-    const agents: LaidOutNode[] = rows.map((row) => {
-      const contextWeight = row.peakContextTokens / maxAgentCtx;
+    const agents: LaidOutNode[] = rows.map((row, i) => {
+      const sizeTokens = agentSizeValues[i] ?? 0;
+      const sizeWeight = sizeTokens / maxAgentSize;
       return {
         id: row.agentId,
         label: shortAgentLabel(row.label),
-        sublabel: formatTokens(row.peakContextTokens),
+        sublabel: formatTokens(sizeTokens),
         kind: "agent" as const,
         agentKind: row.kind,
-        contextWeight,
-        radius: radiusFromWeight(contextWeight, AGENT_R_MIN, AGENT_R_MAX),
-        contextTokens: row.peakContextTokens,
+        sizeWeight,
+        radius: radiusFromWeight(sizeWeight, AGENT_R_MIN, AGENT_R_MAX),
+        sizeTokens,
       };
     });
     const tools: LaidOutNode[] = visible.map((tool) => {
       const ctx = toolContextByName.get(tool.toolName) ?? 0;
-      const contextWeight = useToolCallsFallback
+      const sizeWeight = useToolCallsFallback
         ? tool.callCount / maxToolCalls
         : ctx / maxToolCtx;
       // Slightly smaller circles when many tools share the canvas.
@@ -347,9 +371,9 @@ export function AgentToolDiagram({
           ? `${tool.callCount}×`
           : formatTokens(ctx),
         kind: "tool" as const,
-        contextWeight,
-        radius: radiusFromWeight(contextWeight, TOOL_R_MIN, toolRMax),
-        contextTokens: ctx,
+        sizeWeight,
+        radius: radiusFromWeight(sizeWeight, TOOL_R_MIN, toolRMax),
+        sizeTokens: ctx,
       };
     });
 
@@ -369,7 +393,7 @@ export function AgentToolDiagram({
         ...tools.map((t) => t.id),
       ].join("|"),
     };
-  }, [rows, toolContextByName, showAllTools]);
+  }, [rows, toolContextByName, showAllTools, agentSizeMetric]);
 
   const [positions, setPositions] = useState<Record<string, Point>>(() =>
     initialRadialPositions(agentNodes, toolNodes, world),
@@ -619,6 +643,8 @@ export function AgentToolDiagram({
         : node.agentKind === "subagent"
           ? "subagent"
           : "root agent";
+    const metricHint =
+      node.kind === "tool" ? "attributed growth" : agentSizeCaption;
 
     return (
       <g
@@ -642,7 +668,7 @@ export function AgentToolDiagram({
           }
         }}
       >
-        <title>{`${node.label} (${kindHint}) · ${node.sublabel} context · drag to rearrange`}</title>
+        <title>{`${node.label} (${kindHint}) · ${node.sublabel} ${metricHint} · drag to rearrange`}</title>
         <circle
           r={r}
           fill={
@@ -701,6 +727,62 @@ export function AgentToolDiagram({
           overflow: "hidden",
         }}
       >
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            zIndex: 2,
+            alignItems: "center",
+            bgcolor: alpha(theme.palette.background.paper, 0.92),
+            border: 1,
+            borderColor: "divider",
+            borderRadius: 1,
+            p: 0.25,
+          }}
+        >
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={agentSizeMetric}
+            onChange={(_e, value: AgentSizeMetric | null) => {
+              if (value != null) setAgentSizeMetric(value);
+            }}
+            aria-label="Agent circle size metric"
+          >
+            <ToggleButton
+              value="peakContext"
+              aria-label="Size agents by peak context"
+              sx={{
+                textTransform: "none",
+                fontSize: "0.72rem",
+                px: 1,
+                py: 0.25,
+                color: "text.secondary",
+                border: "none",
+              }}
+            >
+              Peak ctx
+            </ToggleButton>
+            <ToggleButton
+              value="totalTokens"
+              aria-label="Size agents by total tokens"
+              sx={{
+                textTransform: "none",
+                fontSize: "0.72rem",
+                px: 1,
+                py: 0.25,
+                color: "text.secondary",
+                border: "none",
+              }}
+            >
+              Tokens
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
+
         <Stack
           direction="row"
           spacing={0.5}
@@ -802,7 +884,7 @@ export function AgentToolDiagram({
           <Box
             component="svg"
             role="img"
-            aria-label="Radial diagram of agents and tools. Circle size reflects context size. Root agent is centered; drag nodes to rearrange; scroll or use buttons to zoom."
+            aria-label={`Radial diagram of agents and tools. Agent circle size reflects ${agentSizeCaption}; tool circles reflect attributed context growth. Root agent is centered; drag nodes to rearrange; scroll or use buttons to zoom.`}
             width="100%"
             height="100%"
             sx={{ display: "block", fontFamily: theme.typography.fontFamily }}
@@ -962,7 +1044,8 @@ export function AgentToolDiagram({
               : totalToolKinds > 0
                 ? ` · ${pluralize(totalToolKinds, "tool")}`
                 : ""}
-          {" · "}circle size = context
+          {" · "}agent size = {agentSizeCaption}
+          {" · "}tool size = attributed growth
           {" · "}root centered · drag to rearrange · scroll or +/− to zoom · click
           to focus
         </Typography>
