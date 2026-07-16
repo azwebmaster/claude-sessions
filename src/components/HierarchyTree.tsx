@@ -137,8 +137,14 @@ export function HierarchyTree({
         focused={isFocused}
         onActivate={() => {
           onFocusNode?.(node.id);
-          if (hasChildren) setOpen((v) => !v);
         }}
+        onToggleExpand={
+          hasChildren
+            ? () => {
+                setOpen((v) => !v);
+              }
+            : undefined
+        }
         leading={
           <Chip
             size="small"
@@ -158,7 +164,6 @@ export function HierarchyTree({
         body={
           <Box>
             <Typography variant="subtitle2" sx={{ fontSize: { xs: "0.85rem", sm: "0.9rem" }, wordBreak: "break-word" }}>
-              {hasChildren ? (open ? "▾ " : "▸ ") : ""}
               {node.label}
             </Typography>
             {node.preview ? (
