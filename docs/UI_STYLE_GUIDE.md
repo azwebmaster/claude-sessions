@@ -109,7 +109,7 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | `Chip` | Source, branch, model, kind badges |
 | `Link` | Back navigation |
 | `Collapse` | Hierarchy tree, tool impact expansion |
-| `LinearProgress` | Tool impact bars |
+| `LinearProgress` | Tool impact bars, agent usage context/tool bars |
 | `Alert` | Error states |
 | `CircularProgress` | Loading states |
 | `IconButton` + icons | Color mode toggle |

@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type {
   AgentBreakdownRow,
+  AgentToolSummary,
   ContextCategorySummary,
   ContextTimelinePoint,
   LoadedContextItem,
@@ -1545,7 +1546,14 @@ function buildAgentTreeFromEntries(
     kind: "root_agent" | "subagent";
     model: string | null;
   },
-): { tree: TreeNode; usage: TokenUsage; peak: number; toolCalls: number; messages: number } {
+): {
+  tree: TreeNode;
+  usage: TokenUsage;
+  peak: number;
+  toolCalls: number;
+  messages: number;
+  tools: Map<string, number>;
+} {
   const root: TreeNode = {
     id: opts.id,
     kind: opts.kind,
@@ -1561,6 +1569,7 @@ function buildAgentTreeFromEntries(
   };
 
   const toolNodes = new Map<string, TreeNode>();
+  const toolCounts = new Map<string, number>();
   let usage = emptyUsage();
   let peak = 0;
   let toolCalls = 0;
@@ -1689,7 +1698,9 @@ function buildAgentTreeFromEntries(
 
       for (const tool of tools) {
         toolCalls += 1;
-        const summary = toolInputPreview(tool.name ?? "tool", tool.input);
+        const name = tool.name ?? "tool";
+        toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
+        const summary = toolInputPreview(name, tool.input);
         const inputPreview =
           summary ?? previewText(stringifyContent(tool.input), 160);
         const isSubagent =
@@ -1794,7 +1805,18 @@ function buildAgentTreeFromEntries(
     contextAfter: peak || null,
     contextDelta: null,
   };
-  return { tree: root, usage, peak, toolCalls, messages };
+  return { tree: root, usage, peak, toolCalls, messages, tools: toolCounts };
+}
+
+function agentToolSummaries(
+  toolCounts: Map<string, number>,
+): AgentToolSummary[] {
+  return [...toolCounts.entries()]
+    .map(([toolName, callCount]) => ({ toolName, callCount }))
+    .sort(
+      (a, b) =>
+        b.callCount - a.callCount || a.toolName.localeCompare(b.toolName),
+    );
 }
 
 export function buildSessionDetail(
@@ -1836,6 +1858,7 @@ export function buildSessionDetail(
       peakContextTokens: rootBuild.peak,
       toolCallCount: rootBuild.toolCalls,
       messageCount: rootBuild.messages,
+      tools: agentToolSummaries(rootBuild.tools),
     },
   ];
 
@@ -1874,6 +1897,7 @@ export function buildSessionDetail(
       peakContextTokens: built.peak,
       toolCallCount: built.toolCalls,
       messageCount: built.messages,
+      tools: agentToolSummaries(built.tools),
     });
 
     const target = taskToolNodes[index];

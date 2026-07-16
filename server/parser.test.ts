@@ -102,6 +102,17 @@ describe("fixture session parse", () => {
         detail.toolImpact.every((t) => t.contextGrowthAttributed === 0),
     );
     assert.ok(detail.agentBreakdown.some((a) => a.kind === "subagent"));
+    const rootAgent = detail.agentBreakdown.find((a) => a.kind === "root_agent");
+    assert.ok(rootAgent);
+    assert.ok(Array.isArray(rootAgent.tools));
+    assert.equal(
+      rootAgent.tools.reduce((sum, t) => sum + t.callCount, 0),
+      rootAgent.toolCallCount,
+    );
+    if (rootAgent.toolCallCount > 0) {
+      assert.ok(rootAgent.tools.length > 0);
+      assert.ok(rootAgent.tools.every((t) => t.callCount > 0 && t.toolName));
+    }
     assert.ok(contextSize(detail.meta.usage) > 0);
     assert.ok(
       detail.meta.filePath.includes("11111111-1111-1111-1111-111111111111.jsonl"),

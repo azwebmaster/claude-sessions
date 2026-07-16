@@ -183,6 +183,12 @@ export interface ToolImpactRow {
   calls: ToolImpactCall[];
 }
 
+/** Tool call counts for one agent, largest first */
+export interface AgentToolSummary {
+  toolName: string;
+  callCount: number;
+}
+
 export interface AgentBreakdownRow {
   agentId: string;
   label: string;
@@ -192,6 +198,8 @@ export interface AgentBreakdownRow {
   peakContextTokens: number;
   toolCallCount: number;
   messageCount: number;
+  /** Per-tool call counts within this agent's transcript */
+  tools: AgentToolSummary[];
 }
 
 export function emptyUsage(): TokenUsage {
