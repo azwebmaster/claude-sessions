@@ -23,7 +23,8 @@ Options for serve:
   -H, --host <host>     Hostname to bind (default: 127.0.0.1)
 
 Options for analyze:
-  -m, --model <model>   Model for Agent SDK analysis (or $CLAUDE_SESSIONS_ANALYZE_MODEL)
+  -m, --model <alias>   Model alias for Agent SDK analysis: opus, sonnet, or haiku
+                        (default: haiku, or $CLAUDE_SESSIONS_ANALYZE_MODEL)
 
 Global:
   -h, --help            Show this help message
@@ -33,7 +34,7 @@ Examples:
   ${PACKAGE_NAME} serve --port 3000
   ${PACKAGE_NAME} analyze
   ${PACKAGE_NAME} analyze 11111111-1111-1111-1111-111111111111
-  ${PACKAGE_NAME} analyze --model claude-haiku-4-5
+  ${PACKAGE_NAME} analyze --model haiku
 `);
 }
 

@@ -9,10 +9,12 @@ import {
   buildAnalyzeEnv,
   parseAnalysisOutput,
   resolveAnalyzeCwd,
+  resolveAnalyzeModel,
   resolveClaudeExecutable,
   AnalyzeSessionError,
 } from "./analyze.js";
 import type { AnalyzeProgressEvent } from "../shared/types.js";
+import { DEFAULT_ANALYZE_MODEL_ALIAS } from "../shared/types.js";
 import { buildSessionDetail, parseSessionFile } from "./parser.js";
 import { fixtureRoot } from "./sessions.js";
 
@@ -267,7 +269,7 @@ describe("analyzeSession", () => {
           cwd: process.cwd(),
           tools: [],
           mcp_servers: [],
-          model: "claude-haiku-4-5",
+          model: "haiku",
           permissionMode: "dontAsk",
           slash_commands: [],
           output_style: "default",
@@ -312,11 +314,67 @@ describe("analyzeSession", () => {
       },
     });
     assert.match(analysis.summary, /Progressed/);
+    assert.equal(analysis.model, "haiku");
     assert.ok(stages.includes("starting"));
     assert.ok(stages.includes("query_start"));
     assert.ok(stages.includes("sdk_ready"));
     assert.ok(stages.includes("model_running"));
     assert.ok(stages.includes("complete"));
+  });
+
+  it("resolves analyze models to Anthropic aliases only", () => {
+    assert.equal(resolveAnalyzeModel(undefined), DEFAULT_ANALYZE_MODEL_ALIAS);
+    assert.equal(resolveAnalyzeModel("haiku"), "haiku");
+    assert.equal(resolveAnalyzeModel("Sonnet"), "sonnet");
+    assert.equal(resolveAnalyzeModel("OPUS"), "opus");
+    assert.throws(
+      () => resolveAnalyzeModel("claude-haiku-4-5"),
+      (err: unknown) =>
+        err instanceof AnalyzeSessionError &&
+        err.code === "invalid" &&
+        /alias/i.test(err.message),
+    );
+  });
+
+  it("passes the selected model alias into the runner", async () => {
+    const detail = await loadFixtureDetail();
+    let seenModel: string | undefined;
+    const analysis = await analyzeSession(detail, {
+      model: "sonnet",
+      loadExtras: async () => ({ info: null, messages: [] }),
+      resolveExecutable: () => undefined,
+      runner: async function* ({ options }) {
+        seenModel = options?.model;
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          is_error: false,
+          num_turns: 1,
+          result: "",
+          stop_reason: "end_turn",
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          structured_output: {
+            summary: "Used sonnet alias.",
+            findings: [],
+            recommendations: [],
+          },
+          uuid: "00000000-0000-0000-0000-000000000020",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+      },
+    });
+    assert.equal(seenModel, "sonnet");
+    assert.equal(analysis.model, "sonnet");
   });
 
   it("passes a resolved Claude executable into the runner", async () => {

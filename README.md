@@ -56,7 +56,7 @@ claude-sessions serve --port 3000
 claude-sessions serve -H 0.0.0.0 -p 8787
 claude-sessions analyze                 # most recently updated session
 claude-sessions analyze <session-uuid>
-claude-sessions analyze --model claude-haiku-4-5
+claude-sessions analyze --model haiku
 claude-sessions --help
 ```
 
@@ -74,7 +74,7 @@ Session detail pages expose **Analyze session**, which:
 
 1. Builds a compact profile brief from the existing JSONL profiler
 2. Enriches it with Agent SDK session APIs when the transcript is under `~/.claude/projects`
-3. Runs a single-turn structured `query()` (default model: `claude-haiku-4-5`, override with `$CLAUDE_SESSIONS_ANALYZE_MODEL` or `--model`)
+3. Runs a single-turn structured `query()` with an Anthropic model **alias** only: `opus`, `sonnet`, or `haiku` (default: `haiku`; override with `$CLAUDE_SESSIONS_ANALYZE_MODEL`, `--model`, or the UI selector)
 
 Auth is inherited from the host: `~/.claude` user settings (`apiKeyHelper` / settings `env`), interactive `claude auth login` credentials, and process env (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, cloud-provider vars). The HTTP endpoint is `POST /api/sessions/:id/analyze` (add `?stream=1` or `Accept: application/x-ndjson` for a progress stream).
 

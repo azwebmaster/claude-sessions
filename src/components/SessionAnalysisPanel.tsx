@@ -7,19 +7,30 @@ import {
   CircularProgress,
   LinearProgress,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import CheckCircleOutlinedIcon from "@mui/icons-material/CheckCircleOutlined";
-import type {
-  AnalysisSeverity,
-  AnalyzeProgressEvent,
-  AnalyzeProgressStage,
-  SessionAnalysis,
+import {
+  ANALYZE_MODEL_ALIASES,
+  DEFAULT_ANALYZE_MODEL_ALIAS,
+  type AnalysisSeverity,
+  type AnalyzeModelAlias,
+  type AnalyzeProgressEvent,
+  type AnalyzeProgressStage,
+  type SessionAnalysis,
 } from "@shared/types";
 import { EmptyState, SectionPaper } from "./ui";
 import { apiAnalyzeStream } from "../lib/api";
 import { layout } from "../theme";
+
+const MODEL_LABELS: Record<AnalyzeModelAlias, string> = {
+  opus: "Opus",
+  sonnet: "Sonnet",
+  haiku: "Haiku",
+};
 
 /** Above server hard cap (300s) so the API can report timeout first. */
 const CLIENT_ANALYZE_TIMEOUT_MS = 310_000;
@@ -69,6 +80,9 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
   const [progress, setProgress] = useState<AnalyzeProgressEvent | null>(null);
   const [seenStages, setSeenStages] = useState<AnalyzeProgressStage[]>([]);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [model, setModel] = useState<AnalyzeModelAlias>(
+    DEFAULT_ANALYZE_MODEL_ALIAS,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
 
@@ -122,7 +136,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     try {
       const result = await apiAnalyzeStream(
         sessionId,
-        {},
+        { model },
         {
           signal: controller.signal,
           onEvent: (event) => {
@@ -179,39 +193,95 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
           to a single-turn Agent SDK query.
         </Typography>
         <Stack
-          direction="row"
+          direction={{ xs: "column", sm: "row" }}
           spacing={1}
-          sx={{ flexShrink: 0, alignSelf: { xs: "stretch", sm: "center" } }}
+          sx={{
+            flexShrink: 0,
+            alignSelf: { xs: "stretch", sm: "center" },
+            alignItems: { sm: "center" },
+          }}
         >
-          {loading ? (
-            <Button
-              variant="outlined"
+          <Stack
+            direction="row"
+            spacing={0.25}
+            sx={{
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 1,
+              p: 0.25,
+              alignSelf: { xs: "stretch", sm: "center" },
+            }}
+          >
+            <ToggleButtonGroup
+              exclusive
               size="small"
-              color="inherit"
-              onClick={cancelAnalysis}
+              value={model}
+              disabled={loading}
+              onChange={(_e, value: AnalyzeModelAlias | null) => {
+                if (value != null) setModel(value);
+              }}
+              aria-label="Analyze model"
+              sx={{ width: { xs: "100%", sm: "auto" } }}
+            >
+              {ANALYZE_MODEL_ALIASES.map((alias) => (
+                <ToggleButton
+                  key={alias}
+                  value={alias}
+                  aria-label={MODEL_LABELS[alias]}
+                  sx={{
+                    textTransform: "none",
+                    fontSize: "0.72rem",
+                    px: 1,
+                    py: 0.25,
+                    color: "text.secondary",
+                    border: "none",
+                    flex: { xs: 1, sm: "none" },
+                  }}
+                >
+                  {MODEL_LABELS[alias]}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          </Stack>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignSelf: { xs: "stretch", sm: "center" } }}
+          >
+            {loading ? (
+              <Button
+                variant="outlined"
+                size="small"
+                color="inherit"
+                onClick={cancelAnalysis}
+                sx={{ flex: { xs: 1, sm: "none" } }}
+              >
+                Cancel
+              </Button>
+            ) : null}
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={
+                loading ? (
+                  <CircularProgress size={14} color="inherit" />
+                ) : (
+                  <AutoAwesomeOutlinedIcon fontSize="small" />
+                )
+              }
+              onClick={() => {
+                void runAnalysis();
+              }}
+              disabled={loading}
               sx={{ flex: { xs: 1, sm: "none" } }}
             >
-              Cancel
+              {loading
+                ? "Analyzing…"
+                : analysis
+                  ? "Re-analyze"
+                  : "Analyze session"}
             </Button>
-          ) : null}
-          <Button
-            variant="contained"
-            size="small"
-            startIcon={
-              loading ? (
-                <CircularProgress size={14} color="inherit" />
-              ) : (
-                <AutoAwesomeOutlinedIcon fontSize="small" />
-              )
-            }
-            onClick={() => {
-              void runAnalysis();
-            }}
-            disabled={loading}
-            sx={{ flex: { xs: 1, sm: "none" } }}
-          >
-            {loading ? "Analyzing…" : analysis ? "Re-analyze" : "Analyze session"}
-          </Button>
+          </Stack>
         </Stack>
       </Stack>
 

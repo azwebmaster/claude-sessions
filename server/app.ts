@@ -148,7 +148,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               ? 504
               : err.code === "empty"
                 ? 502
-                : 500;
+                : err.code === "invalid"
+                  ? 400
+                  : 500;
         return c.json({ error: err.message, code: err.code }, status);
       }
       const message = err instanceof Error ? err.message : String(err);

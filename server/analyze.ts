@@ -12,15 +12,39 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type {
+  AnalyzeModelAlias,
   AnalyzeProgressEvent,
   AnalyzeProgressStage,
   SessionAnalysis,
   SessionDetail,
 } from "../shared/types.js";
-import { formatTokens, totalTokens } from "../shared/types.js";
+import {
+  ANALYZE_MODEL_ALIASES,
+  DEFAULT_ANALYZE_MODEL_ALIAS,
+  formatTokens,
+  isAnalyzeModelAlias,
+  totalTokens,
+} from "../shared/types.js";
 
-const DEFAULT_ANALYZE_MODEL =
-  process.env.CLAUDE_SESSIONS_ANALYZE_MODEL ?? "claude-haiku-4-5";
+/**
+ * Resolve the analyze model to an Anthropic alias (`opus` | `sonnet` | `haiku`).
+ * Full model names are not accepted — the API expects aliases only.
+ */
+export function resolveAnalyzeModel(
+  requested?: string | null,
+): AnalyzeModelAlias {
+  const trimmed = requested?.trim().toLowerCase();
+  if (trimmed) {
+    if (isAnalyzeModelAlias(trimmed)) return trimmed;
+    throw new AnalyzeSessionError(
+      `Invalid model "${requested}". Use an alias: ${ANALYZE_MODEL_ALIASES.join(", ")}.`,
+      "invalid",
+    );
+  }
+  const fromEnv = process.env.CLAUDE_SESSIONS_ANALYZE_MODEL?.trim().toLowerCase();
+  if (fromEnv && isAnalyzeModelAlias(fromEnv)) return fromEnv;
+  return DEFAULT_ANALYZE_MODEL_ALIAS;
+}
 
 /**
  * Hard wall-clock cap for one analyze run (SDK spawn + model).
@@ -393,6 +417,7 @@ export class AnalyzeSessionError extends Error {
       | "empty"
       | "budget"
       | "timeout"
+      | "invalid"
       | "unknown" = "unknown",
   ) {
     super(message);
@@ -433,7 +458,7 @@ export async function analyzeSession(
   detail: SessionDetail,
   options: AnalyzeSessionOptions = {},
 ): Promise<SessionAnalysis> {
-  const model = options.model ?? DEFAULT_ANALYZE_MODEL;
+  const model = resolveAnalyzeModel(options.model);
   const runner = options.runner ?? defaultRunner;
   const loadExtras = options.loadExtras ?? loadSdkSessionExtras;
   const resolveExecutable =
