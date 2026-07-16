@@ -82,6 +82,7 @@ Responsive grids use MUI breakpoint objects: `{ xs: "...", md: "..." }`. Prefer 
 
 - **Session list:** stacked metric cards below `md`; full table from `md` up (with horizontal scroll if needed).
 - **Session detail:** major panels live in top-level tabs (Analysis, Context, Diagram, Hierarchy, Agents, Tool impact). Within Context, Turn detail and Loaded context are nested tabs under the chart. Tab panels grow with content (page scroll); do not add inner scrollbars on tab panels.
+- **Hierarchy:** tree on the left with a skinny agent map on the right (`md+`, sticky). On smaller screens the map becomes a horizontal quick-link strip above the tree. Clicking an agent focuses that node and scrolls it into view.
 - **Expandable rows:** trailing metrics wrap under the label on `xs`; side-by-side from `sm`.
 - **Context chart:** horizontal scroll when many turns; bars keep a tappable min width.
 
@@ -113,6 +114,7 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | `Collapse` | Hierarchy tree, tool impact expansion |
 | `LinearProgress` | Tool impact bars, agent usage context/tool bars |
 | Inline SVG | Agent ↔ tool call diagram (bipartite links) |
+| Sticky side column | Hierarchy agent map (`HierarchyAgentMap`) |
 | `Alert` | Error states |
 | `CircularProgress` | Loading states |
 | `IconButton` + icons | Color mode toggle |
@@ -162,6 +164,10 @@ Apply via `sx={{ animation: motion.rise }}`.
 ### Hierarchy focus
 
 Selected nodes use `focusHighlight(theme)` — warning-colored left accent, not raw orange hex.
+
+### Hierarchy agent map
+
+`HierarchyAgentMap` is a skinny navigation column beside the hierarchy tree: root and subagents as quick links with a vertical spine (`md+`) or a horizontal strip (`xs`/`sm`). Use `nodeKindStyle` dots and `focusHighlight` for the selected agent. Clicking a link sets `focusedNodeId` to that `agentId` so the tree expands ancestors and scrolls the node into view.
 
 ### Charts
 

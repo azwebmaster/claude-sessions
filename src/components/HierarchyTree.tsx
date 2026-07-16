@@ -20,6 +20,8 @@ interface Props {
   node: TreeNode;
   focusedNodeId?: string | null;
   forceOpenIds?: ReadonlySet<string>;
+  /** When true, scroll the focused node into view after expand/focus updates. */
+  scrollFocusedIntoView?: boolean;
   onFocusNode?: (nodeId: string) => void;
   onViewLog?: (node: TreeNode) => void;
 }
@@ -281,6 +283,7 @@ export function HierarchyTree({
   node,
   focusedNodeId = null,
   forceOpenIds,
+  scrollFocusedIntoView = false,
   onFocusNode,
   onViewLog,
 }: Props) {
@@ -309,6 +312,17 @@ export function HierarchyTree({
       return changed ? next : prev;
     });
   }, [forceOpenIds, focusedNodeId]);
+
+  useEffect(() => {
+    if (!scrollFocusedIntoView || !focusedNodeId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(focusedNodeId)}"]`,
+      );
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedNodeId, forceOpenIds, scrollFocusedIntoView]);
 
   const expandAll = () => {
     setOpenIds(new Set(allExpandableIds));
