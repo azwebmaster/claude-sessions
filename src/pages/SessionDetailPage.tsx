@@ -341,7 +341,7 @@ export function SessionDetailPage() {
         <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
           <SectionPaper
             title="Agents"
-            description="Click an agent to highlight it in the hierarchy and expand the path to that node. Selecting a tool call highlights the agent that ran it."
+            description="Usage diagram per agent: peak context size and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the hierarchy. Selecting a tool call highlights the agent that ran it."
           >
             <AgentBreakdown
               rows={detail.agentBreakdown}
