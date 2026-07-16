@@ -317,7 +317,7 @@ export function SessionDetailPage() {
 
       <SectionPaper
         title="Agent ↔ tool calls"
-        description="Who called what: agents on the left, tools on the right. Link thickness scales with call volume. Click an agent, tool, or link to highlight the matching hierarchy node."
+        description="Who called what: agents and tools as a scatter, with arrows for call flow. Link thickness scales with call volume. Drag nodes to rearrange, scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
         sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
       >
         <AgentToolDiagram
