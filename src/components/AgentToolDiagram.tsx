@@ -100,10 +100,15 @@ const MIN_SCALE = 0.28;
 const MAX_SCALE = 2.75;
 const ZOOM_STEP = 1.18;
 
-const AGENT_R_MIN = 28;
-const AGENT_R_MAX = 64;
-const TOOL_R_MIN = 20;
-const TOOL_R_MAX = 48;
+/** Shared radius range for any node sized by a token magnitude (agent or tool). */
+const TOKEN_R_MIN = 22;
+const TOKEN_R_MAX = 64;
+/** Fallback when tool impact is missing and we size tools by call count. */
+const TOOL_CALL_R_MIN = 20;
+const TOOL_CALL_R_MAX = 48;
+/** Used as layout/link fallbacks when a node radius is unknown. */
+const AGENT_R_MIN = TOKEN_R_MIN;
+const TOOL_R_MIN = TOOL_CALL_R_MIN;
 
 interface WorldMetrics {
   width: number;
@@ -160,9 +165,28 @@ function worldMetrics(agentCount: number, toolCount: number): WorldMetrics {
 }
 
 /** Map a 0–1 weight to a radius; sqrt keeps areas closer to perceptual scale. */
-function radiusFromWeight(weight: number, minR: number, maxR: number): number {
+export function radiusFromWeight(
+  weight: number,
+  minR: number,
+  maxR: number,
+): number {
   const w = clamp(weight, 0, 1);
   return minR + Math.sqrt(w) * (maxR - minR);
+}
+
+/**
+ * Radius for a token magnitude on a shared scale with other labeled nodes.
+ * Using one max across agents + tools keeps circle size aligned with the
+ * number shown inside (e.g. 2.5M reads larger than 45k after toggling metrics).
+ */
+export function radiusForTokenValue(
+  value: number,
+  maxValue: number,
+  minR = TOKEN_R_MIN,
+  maxR = TOKEN_R_MAX,
+): number {
+  if (maxValue <= 0) return minR;
+  return radiusFromWeight(value / maxValue, minR, maxR);
 }
 
 function clampPoint(node: LaidOutNode, point: Point, world: WorldMetrics): Point {
@@ -479,7 +503,6 @@ export function AgentToolDiagram({
         ? r.peakContextTokens
         : totalTokens(r.usage),
     );
-    const maxAgentSize = Math.max(...agentSizeValues, 1);
 
     // Attribute session-level tool impact proportionally by this agent's share
     // of calls for that tool name (impact rows are not per-agent).
@@ -492,14 +515,23 @@ export function AgentToolDiagram({
     };
 
     const toolCtxValues = visible.map(attributedCtx);
-    const maxToolCtx = Math.max(...toolCtxValues, 1);
     // If no tool impact data, fall back to call volume so sizes still vary.
     const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
     const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
+    // One max across every token-labeled circle so radius tracks the number
+    // drawn inside — including when agents switch peak ctx ↔ total tokens.
+    const maxTokenLabel = Math.max(
+      ...agentSizeValues,
+      ...(useToolCallsFallback ? [] : toolCtxValues),
+      1,
+    );
+    // Slightly smaller ceiling when many tools share the canvas.
+    const tokenRMax =
+      visible.length > COLLAPSED_MAX_TOOLS ? TOKEN_R_MAX - 6 : TOKEN_R_MAX;
 
     const agents: LaidOutNode[] = rows.map((row, i) => {
       const sizeTokens = agentSizeValues[i] ?? 0;
-      const sizeWeight = sizeTokens / maxAgentSize;
+      const sizeWeight = sizeTokens / maxTokenLabel;
       return {
         id: row.agentId,
         label: shortAgentLabel(row.label),
@@ -507,29 +539,45 @@ export function AgentToolDiagram({
         kind: "agent" as const,
         agentKind: row.kind,
         sizeWeight,
-        radius: radiusFromWeight(sizeWeight, AGENT_R_MIN, AGENT_R_MAX),
+        radius: radiusForTokenValue(
+          sizeTokens,
+          maxTokenLabel,
+          TOKEN_R_MIN,
+          tokenRMax,
+        ),
         sizeTokens,
       };
     });
     const tools: LaidOutNode[] = visible.map((tool, i) => {
       const ctx = toolCtxValues[i] ?? 0;
-      const sizeWeight = useToolCallsFallback
-        ? tool.callCount / maxToolCalls
-        : ctx / maxToolCtx;
-      // Slightly smaller circles when many tools share the canvas.
-      const toolRMax =
-        visible.length > COLLAPSED_MAX_TOOLS ? TOOL_R_MAX - 6 : TOOL_R_MAX;
+      if (useToolCallsFallback) {
+        const sizeWeight = tool.callCount / maxToolCalls;
+        return {
+          id: toolNodeId(tool.agentId, tool.toolName),
+          label: tool.toolName,
+          toolName: tool.toolName,
+          ownerAgentId: tool.agentId,
+          sublabel: `${tool.callCount}×`,
+          kind: "tool" as const,
+          sizeWeight,
+          radius: radiusFromWeight(
+            sizeWeight,
+            TOOL_CALL_R_MIN,
+            TOOL_CALL_R_MAX,
+          ),
+          sizeTokens: ctx,
+        };
+      }
+      const sizeWeight = ctx / maxTokenLabel;
       return {
         id: toolNodeId(tool.agentId, tool.toolName),
         label: tool.toolName,
         toolName: tool.toolName,
         ownerAgentId: tool.agentId,
-        sublabel: useToolCallsFallback
-          ? `${tool.callCount}×`
-          : formatTokens(ctx),
+        sublabel: formatTokens(ctx),
         kind: "tool" as const,
         sizeWeight,
-        radius: radiusFromWeight(sizeWeight, TOOL_R_MIN, toolRMax),
+        radius: radiusForTokenValue(ctx, maxTokenLabel, TOKEN_R_MIN, tokenRMax),
         sizeTokens: ctx,
       };
     });
@@ -849,12 +897,13 @@ export function AgentToolDiagram({
           stroke={selected ? highlight.borderColor : chip.color}
           strokeWidth={selected ? 2.5 : 2}
           filter={`drop-shadow(0 1px 3px ${alpha(theme.palette.common.black, 0.14)})`}
+          style={{ transition: "r 180ms ease" }}
         />
         <circle
           r={r}
           fill={alpha(chip.color, selected ? 0.22 : 0.12)}
           stroke="none"
-          style={{ pointerEvents: "none" }}
+          style={{ pointerEvents: "none", transition: "r 180ms ease" }}
         />
         <text
           textAnchor="middle"
@@ -920,11 +969,11 @@ export function AgentToolDiagram({
             onChange={(_e, value: AgentSizeMetric | null) => {
               if (value != null) setAgentSizeMetric(value);
             }}
-            aria-label="Agent circle size metric"
+            aria-label="Agent label metric (circle size follows the number)"
           >
             <ToggleButton
               value="peakContext"
-              aria-label="Size agents by peak context"
+              aria-label="Label agents by peak context"
               sx={{
                 textTransform: "none",
                 fontSize: "0.72rem",
@@ -938,7 +987,7 @@ export function AgentToolDiagram({
             </ToggleButton>
             <ToggleButton
               value="totalTokens"
-              aria-label="Size agents by total tokens"
+              aria-label="Label agents by total tokens"
               sx={{
                 textTransform: "none",
                 fontSize: "0.72rem",
@@ -1072,7 +1121,7 @@ export function AgentToolDiagram({
           <Box
             component="svg"
             role="img"
-            aria-label={`Radial diagram of agents and tools. Agent circle size reflects ${agentSizeCaption}; tool circles reflect attributed context growth. Root agent is centered; drag nodes to rearrange; use Arrange to auto-layout; scroll or use buttons to zoom.`}
+            aria-label={`Radial diagram of agents and tools. Circle size tracks the number shown. Agent labels show ${agentSizeCaption}; tool labels show attributed context growth. Root agent is centered; drag nodes to rearrange; use Arrange to auto-layout; scroll or use buttons to zoom.`}
             width="100%"
             height="100%"
             sx={{ display: "block", fontFamily: theme.typography.fontFamily }}
@@ -1233,8 +1282,9 @@ export function AgentToolDiagram({
               : totalToolKinds > 0
                 ? ` · ${pluralize(totalToolKinds, "tool")}`
                 : ""}
-          {" · "}agent size = {agentSizeCaption}
-          {" · "}tool size = attributed growth
+          {" · "}circle size ∝ number shown
+          {" · "}agent label = {agentSizeCaption}
+          {" · "}tool label = attributed growth
           {" · "}root centered · drag to rearrange · Arrange to auto-layout ·
           scroll or +/− to zoom · click to focus
         </Typography>
