@@ -22,7 +22,10 @@ export interface SessionListItem {
   summary: string | null;
   startedAt: string | null;
   updatedAt: string | null;
+  /** User prompts (excludes tool-result-only user rows) */
   messageCount: number;
+  /** Assistant turns with usage — matches detail timeline length */
+  turnCount: number;
   toolCallCount: number;
   subagentCount: number;
   model: string | null;

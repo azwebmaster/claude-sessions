@@ -198,7 +198,7 @@ function SessionCard({
             ["Updated", formatDate(session.updatedAt)],
             ["Tokens", formatTokens(totalTokens(session.usage))],
             ["Peak ctx", formatTokens(session.peakContextTokens)],
-            ["Turns", String(session.messageCount)],
+            ["Turns", String(session.turnCount)],
             [
               "Tools / agents",
               `${session.toolCallCount} / ${1 + session.subagentCount}`,
@@ -602,7 +602,7 @@ export function SessionListPage() {
                       </TableCell>
                       <TableCell>
                         <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
-                          {s.messageCount}
+                          {s.turnCount}
                         </Typography>
                       </TableCell>
                       <TableCell>

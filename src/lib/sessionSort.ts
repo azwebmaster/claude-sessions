@@ -58,7 +58,7 @@ function sortValue(
     case "peakCtx":
       return session.peakContextTokens;
     case "turns":
-      return session.messageCount;
+      return session.turnCount;
     case "tools":
       return session.toolCallCount;
     case "agents":

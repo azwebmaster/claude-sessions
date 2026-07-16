@@ -23,6 +23,7 @@ function session(partial: Partial<SessionListItem> = {}): SessionListItem {
     startedAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-15T12:00:00.000Z",
     messageCount: 10,
+    turnCount: 10,
     toolCallCount: 4,
     subagentCount: 1,
     model: "claude-opus-4-6",
