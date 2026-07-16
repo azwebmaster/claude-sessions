@@ -3,8 +3,13 @@ import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
   Table,
   TableBody,
@@ -19,7 +24,14 @@ import type { SessionListItem } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { EmptyState, SectionPaper } from "../components/ui";
 import { api, formatDate } from "../lib/api";
-import { layout, motion } from "../theme";
+import {
+  AGE_PRESETS,
+  boundsFromInputs,
+  hasActiveMetricFilters,
+  matchesSessionFilters,
+  type SessionListFilters,
+} from "../lib/sessionFilters";
+import { layout, monoFontFamily, motion } from "../theme";
 
 interface SessionsResponse {
   sessions: SessionListItem[];
@@ -46,6 +58,69 @@ function SessionChips({ session }: { session: SessionListItem }) {
           variant="outlined"
         />
       ) : null}
+    </Stack>
+  );
+}
+
+function MetricRangeFields({
+  label,
+  min,
+  max,
+  onMinChange,
+  onMaxChange,
+  minPlaceholder = "Min",
+  maxPlaceholder = "Max",
+}: {
+  label: string;
+  min: string;
+  max: string;
+  onMinChange: (value: string) => void;
+  onMaxChange: (value: string) => void;
+  minPlaceholder?: string;
+  maxPlaceholder?: string;
+}) {
+  const fieldSx = {
+    width: { xs: "100%", sm: 88 },
+    minWidth: 0,
+    "& .MuiInputBase-input": {
+      fontFamily: monoFontFamily,
+      fontSize: "0.8rem",
+    },
+  } as const;
+
+  return (
+    <Stack
+      direction="row"
+      spacing={0.75}
+      useFlexGap
+      sx={{ alignItems: "center", flexWrap: "wrap", minWidth: 0 }}
+    >
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ minWidth: { sm: 64 }, flexShrink: 0 }}
+      >
+        {label}
+      </Typography>
+      <TextField
+        size="small"
+        label={minPlaceholder}
+        value={min}
+        onChange={(e) => onMinChange(e.target.value)}
+        aria-label={`${label} minimum`}
+        sx={fieldSx}
+      />
+      <Typography variant="caption" color="text.secondary" aria-hidden>
+        –
+      </Typography>
+      <TextField
+        size="small"
+        label={maxPlaceholder}
+        value={max}
+        onChange={(e) => onMaxChange(e.target.value)}
+        aria-label={`${label} maximum`}
+        sx={fieldSx}
+      />
     </Stack>
   );
 }
@@ -111,7 +186,11 @@ function SessionCard({
             ["Updated", formatDate(session.updatedAt)],
             ["Tokens", formatTokens(totalTokens(session.usage))],
             ["Peak ctx", formatTokens(session.peakContextTokens)],
-            ["Tools / agents", `${session.toolCallCount} / ${1 + session.subagentCount}`],
+            ["Turns", String(session.messageCount)],
+            [
+              "Tools / agents",
+              `${session.toolCallCount} / ${1 + session.subagentCount}`,
+            ],
           ] as const
         ).map(([label, value]) => (
           <Box key={label} sx={{ minWidth: 0 }}>
@@ -149,6 +228,13 @@ export function SessionListPage() {
   const [data, setData] = useState<SessionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [tokensMin, setTokensMin] = useState("");
+  const [tokensMax, setTokensMax] = useState("");
+  const [peakCtxMin, setPeakCtxMin] = useState("");
+  const [peakCtxMax, setPeakCtxMax] = useState("");
+  const [turnsMin, setTurnsMin] = useState("");
+  const [turnsMax, setTurnsMax] = useState("");
+  const [maxAgeMs, setMaxAgeMs] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,23 +250,45 @@ export function SessionListPage() {
     };
   }, []);
 
+  const filters: SessionListFilters = useMemo(
+    () => ({
+      query,
+      tokens: boundsFromInputs(tokensMin, tokensMax),
+      peakCtx: boundsFromInputs(peakCtxMin, peakCtxMax),
+      turns: boundsFromInputs(turnsMin, turnsMax),
+      maxAgeMs,
+    }),
+    [
+      query,
+      tokensMin,
+      tokensMax,
+      peakCtxMin,
+      peakCtxMax,
+      turnsMin,
+      turnsMax,
+      maxAgeMs,
+    ],
+  );
+
   const filtered = useMemo(() => {
     if (!data) return [];
-    const q = query.trim().toLowerCase();
-    if (!q) return data.sessions;
-    return data.sessions.filter((s) => {
-      const hay = [
-        s.summary ?? "",
-        s.projectPath,
-        s.id,
-        s.model ?? "",
-        s.gitBranch ?? "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [data, query]);
+    const nowMs = Date.now();
+    return data.sessions.filter((s) => matchesSessionFilters(s, filters, nowMs));
+  }, [data, filters]);
+
+  const metricsActive = hasActiveMetricFilters(filters);
+  const textActive = query.trim().length > 0;
+  const anyFilterActive = metricsActive || textActive;
+
+  const clearMetricFilters = () => {
+    setTokensMin("");
+    setTokensMax("");
+    setPeakCtxMin("");
+    setPeakCtxMax("");
+    setTurnsMin("");
+    setTurnsMax("");
+    setMaxAgeMs(null);
+  };
 
   if (error) {
     return (
@@ -210,13 +318,15 @@ export function SessionListPage() {
           sx={{
             alignItems: { sm: "center" },
             justifyContent: "space-between",
-            mb: 2,
+            mb: 1.5,
           }}
         >
           <Typography sx={{ fontSize: { xs: "0.9rem", sm: "1rem" } }}>
-            <Box component="strong">{data.count}</Box>{" "}
+            <Box component="strong">
+              {anyFilterActive ? `${filtered.length} / ${data.count}` : data.count}
+            </Box>{" "}
             <Box component="span" sx={{ color: "text.secondary" }}>
-              sessions on this system
+              {anyFilterActive ? "sessions match" : "sessions on this system"}
             </Box>
           </Typography>
           <TextField
@@ -224,7 +334,7 @@ export function SessionListPage() {
             placeholder="Filter by project, summary, model, branch…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            aria-label="Filter sessions"
+            aria-label="Filter sessions by text"
             fullWidth
             sx={{
               flex: { sm: "1 1 240px" },
@@ -233,6 +343,69 @@ export function SessionListPage() {
               alignSelf: { sm: "stretch" },
             }}
           />
+        </Stack>
+
+        <Stack
+          direction="row"
+          spacing={1.5}
+          useFlexGap
+          sx={{
+            alignItems: "center",
+            flexWrap: "wrap",
+            mb: 2,
+            rowGap: 1.25,
+          }}
+        >
+          <MetricRangeFields
+            label="Tokens"
+            min={tokensMin}
+            max={tokensMax}
+            onMinChange={setTokensMin}
+            onMaxChange={setTokensMax}
+            minPlaceholder="Min"
+            maxPlaceholder="Max"
+          />
+          <MetricRangeFields
+            label="Peak ctx"
+            min={peakCtxMin}
+            max={peakCtxMax}
+            onMinChange={setPeakCtxMin}
+            onMaxChange={setPeakCtxMax}
+          />
+          <MetricRangeFields
+            label="Turns"
+            min={turnsMin}
+            max={turnsMax}
+            onMinChange={setTurnsMin}
+            onMaxChange={setTurnsMax}
+          />
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel id="session-age-filter-label">Age</InputLabel>
+            <Select
+              labelId="session-age-filter-label"
+              label="Age"
+              value={maxAgeMs == null ? "" : String(maxAgeMs)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setMaxAgeMs(v === "" ? null : Number(v));
+              }}
+              aria-label="Filter sessions by age"
+            >
+              {AGE_PRESETS.map((preset) => (
+                <MenuItem
+                  key={preset.label}
+                  value={preset.maxAgeMs == null ? "" : String(preset.maxAgeMs)}
+                >
+                  {preset.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {metricsActive ? (
+            <Button size="small" onClick={clearMetricFilters} sx={{ flexShrink: 0 }}>
+              Clear metrics
+            </Button>
+          ) : null}
         </Stack>
 
         {filtered.length === 0 ? (
@@ -274,6 +447,7 @@ export function SessionListPage() {
                     <TableCell>Updated</TableCell>
                     <TableCell>Tokens</TableCell>
                     <TableCell>Peak ctx</TableCell>
+                    <TableCell>Turns</TableCell>
                     <TableCell>Tools</TableCell>
                     <TableCell>Agents</TableCell>
                   </TableRow>
@@ -314,6 +488,11 @@ export function SessionListPage() {
                       <TableCell>
                         <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
                           {formatTokens(s.peakContextTokens)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                          {s.messageCount}
                         </Typography>
                       </TableCell>
                       <TableCell>

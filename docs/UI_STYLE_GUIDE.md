@@ -105,7 +105,8 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | --- | --- |
 | `Paper` | Section containers (via `SectionPaper`) |
 | `Table` | Session list |
-| `TextField` | Session filter |
+| `TextField` | Session text filter; token / peak ctx / turns min–max |
+| `Select` | Session age filter presets |
 | `Chip` | Source, branch, model, kind badges |
 | `Link` | Back navigation |
 | `Collapse` | Hierarchy tree, tool impact expansion |
