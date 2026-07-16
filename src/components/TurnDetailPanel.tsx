@@ -1,8 +1,8 @@
+import { useTheme } from "@mui/material/styles";
 import { Box, Typography } from "@mui/material";
 import type { ContextTimelinePoint } from "@shared/types";
 import { formatTokens } from "@shared/types";
-
-const mono = '"IBM Plex Mono", ui-monospace, monospace';
+import { alertSurface, motion, usagePartColors } from "../theme";
 
 interface Props {
   point: ContextTimelinePoint | null;
@@ -23,6 +23,10 @@ function exact(n: number): string {
 }
 
 export function TurnDetailPanel({ point, previous }: Props) {
+  const theme = useTheme();
+  const colors = usagePartColors(theme);
+  const warningSurface = alertSurface(theme, "warning");
+
   if (!point) {
     return (
       <Box
@@ -49,7 +53,7 @@ export function TurnDetailPanel({ point, previous }: Props) {
       label: "Input (uncached)",
       hint: "Fresh prompt tokens not served from cache",
       value: point.inputTokens,
-      color: "#1976d2",
+      color: colors.input,
       inContext: true,
     },
     {
@@ -57,7 +61,7 @@ export function TurnDetailPanel({ point, previous }: Props) {
       label: "Cache write",
       hint: "Tokens written into prompt cache this turn (often the big first-turn number)",
       value: point.cacheCreationTokens,
-      color: "#00897b",
+      color: colors.cacheWrite,
       inContext: true,
     },
     {
@@ -65,7 +69,7 @@ export function TurnDetailPanel({ point, previous }: Props) {
       label: "Cache read",
       hint: "Tokens reused from prompt cache",
       value: point.cacheReadTokens,
-      color: "#7b1fa2",
+      color: colors.cacheRead,
       inContext: true,
     },
     {
@@ -73,7 +77,7 @@ export function TurnDetailPanel({ point, previous }: Props) {
       label: "Output",
       hint: "Model reply tokens (billed, but not part of ctx occupancy)",
       value: point.outputTokens,
-      color: "#ef6c00",
+      color: colors.output,
       inContext: false,
     },
   ];
@@ -95,20 +99,19 @@ export function TurnDetailPanel({ point, previous }: Props) {
         p: 1.75,
         borderRadius: 1.5,
         border: 1,
-        borderColor: "warning.main",
-        bgcolor: "rgba(237, 108, 2, 0.06)",
-        animation: "rise 280ms ease both",
+        ...warningSurface,
+        animation: motion.riseFast,
       }}
     >
-      <Typography sx={{ fontWeight: 650, fontSize: "0.95rem", mb: 0.5 }}>
+      <Typography variant="subtitle2" sx={{ fontSize: "0.95rem", mb: 0.5 }}>
         Turn {point.turn}: {point.label}
       </Typography>
       <Typography color="text.secondary" sx={{ fontSize: "0.82rem", mb: 1.5 }}>
         {isBaseline ? (
           <>
-            <Box component="span" sx={{ fontFamily: mono, fontWeight: 600 }}>
+            <Typography component="span" variant="mono" sx={{ fontWeight: 600 }}>
               {formatTokens(point.contextTokens)}
-            </Box>{" "}
+            </Typography>{" "}
             ({exact(point.contextTokens)}) is the{" "}
             <Box component="span" sx={{ fontWeight: 650 }}>
               baseline context window
@@ -120,14 +123,14 @@ export function TurnDetailPanel({ point, previous }: Props) {
         ) : (
           <>
             Context occupancy{" "}
-            <Box component="span" sx={{ fontFamily: mono, fontWeight: 600 }}>
+            <Typography component="span" variant="mono" sx={{ fontWeight: 600 }}>
               {formatTokens(point.contextTokens)}
-            </Box>{" "}
+            </Typography>{" "}
             ({exact(point.contextTokens)})
             {delta != null && delta !== 0
               ? `, ${delta > 0 ? "+" : ""}${exact(delta)} vs prior turn`
               : ", unchanged vs prior turn"}
-            . Nested tool <Box component="span" sx={{ fontFamily: mono }}>+N est</Box>{" "}
+            . Nested tool <Typography component="span" variant="mono">+N est</Typography>{" "}
             chips are estimated I/O sizes only.
           </>
         )}
@@ -204,8 +207,8 @@ export function TurnDetailPanel({ point, previous }: Props) {
               </Typography>
             </Box>
             <Typography
+              variant="mono"
               sx={{
-                fontFamily: mono,
                 fontSize: "0.78rem",
                 fontWeight: 650,
                 textAlign: "right",
@@ -228,10 +231,7 @@ export function TurnDetailPanel({ point, previous }: Props) {
         ))}
       </Box>
 
-      <Typography
-        color="text.secondary"
-        sx={{ mt: 1.25, fontSize: "0.72rem", fontFamily: mono }}
-      >
+      <Typography variant="mono" color="text.secondary" sx={{ mt: 1.25, fontSize: "0.72rem" }}>
         ctx = input + cache write + cache read = {exact(point.contextTokens)}
         {" · "}
         billed total = ctx + output ={" "}
