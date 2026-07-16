@@ -17,6 +17,7 @@ import {
 import { api, formatDate } from "../lib/api";
 import {
   findAncestorIds,
+  findFirstToolCallByName,
   findNode,
   findOwningAgentId,
   findToolCallNodeId,
@@ -25,6 +26,7 @@ import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
+import { AgentToolDiagram } from "../components/AgentToolDiagram";
 import { TurnDetailPanel } from "../components/TurnDetailPanel";
 import { LoadedContextPanel } from "../components/LoadedContextPanel";
 import { LogLinePanel } from "../components/LogLinePanel";
@@ -103,10 +105,27 @@ export function SessionDetailPage() {
     return node.toolUseId ?? node.id;
   }, [detail, focusedNodeId]);
 
+  const focusedToolName = useMemo(() => {
+    if (!detail || !focusedNodeId) return null;
+    const node = findNode(detail.tree, focusedNodeId);
+    if (!node || node.kind !== "tool_call") return null;
+    return node.toolName ?? null;
+  }, [detail, focusedNodeId]);
+
   const focusToolCall = (toolUseId: string) => {
     if (!detail) return;
     const nodeId = findToolCallNodeId(detail.tree, toolUseId) ?? toolUseId;
     setFocusedNodeId(nodeId);
+  };
+
+  const focusToolByName = (toolName: string, agentId?: string) => {
+    if (!detail) return;
+    const nodeId = findFirstToolCallByName(
+      detail.tree,
+      toolName,
+      agentId ?? null,
+    );
+    if (nodeId) setFocusedNodeId(nodeId);
   };
 
   const focusedLoadedContext = useMemo(() => {
@@ -293,6 +312,20 @@ export function SessionDetailPage() {
           onSelectEvidence={(item) => {
             if (item.evidence) openLogModal(item.evidence);
           }}
+        />
+      </SectionPaper>
+
+      <SectionPaper
+        title="Agent ↔ tool calls"
+        description="Who called what: agents on the left, tools on the right. Link thickness scales with call volume. Click an agent, tool, or link to highlight the matching hierarchy node."
+        sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
+      >
+        <AgentToolDiagram
+          rows={detail.agentBreakdown}
+          selectedAgentId={selectedAgentId}
+          selectedToolName={focusedToolName}
+          onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
+          onSelectTool={focusToolByName}
         />
       </SectionPaper>
 

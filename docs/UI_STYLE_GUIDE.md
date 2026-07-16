@@ -110,6 +110,7 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | `Link` | Back navigation |
 | `Collapse` | Hierarchy tree, tool impact expansion |
 | `LinearProgress` | Tool impact bars, agent usage context/tool bars |
+| Inline SVG | Agent ↔ tool call diagram (bipartite links) |
 | `Alert` | Error states |
 | `CircularProgress` | Loading states |
 | `IconButton` + icons | Color mode toggle |
@@ -163,6 +164,10 @@ Selected nodes use `focusHighlight(theme)` — warning-colored left accent, not 
 ### Charts
 
 Timeline bars use `chartBarColors(theme)` gradients. Selected bar uses `warning`; growth uses `primary`/`info`.
+
+### Agent ↔ tool diagram
+
+`AgentToolDiagram` is a bipartite SVG: agents left, tools right, curved links weighted by call count. Use `nodeKindStyle` for node accents and `focusHighlight` when an agent or tool is selected. Cap displayed tools (top N by volume) so dense sessions stay readable; note hidden tool count in the caption.
 
 ## Adding new UI
 

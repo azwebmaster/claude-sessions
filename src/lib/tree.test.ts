@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { TreeNode } from "@shared/types";
 import {
   findAncestorIds,
+  findFirstToolCallByName,
   findNode,
   findNodePath,
   findOwningAgentId,
@@ -27,6 +28,7 @@ function node(
     log: null,
     agentId: partial.agentId,
     toolUseId: partial.toolUseId,
+    toolName: partial.toolName,
     children: partial.children ?? [],
   };
 }
@@ -44,16 +46,40 @@ const tree = node({
           id: "tool-1",
           kind: "tool_call",
           toolUseId: "tool-use-1",
+          toolName: "Task",
           children: [
             node({
               id: "sub-a",
               kind: "subagent",
               agentId: "sub-a",
               children: [
-                node({ id: "sub-turn", kind: "assistant_message" }),
+                node({
+                  id: "sub-turn",
+                  kind: "assistant_message",
+                  children: [
+                    node({
+                      id: "tool-2",
+                      kind: "tool_call",
+                      toolUseId: "tool-use-2",
+                      toolName: "Read",
+                    }),
+                    node({
+                      id: "tool-3",
+                      kind: "tool_call",
+                      toolUseId: "tool-use-3",
+                      toolName: "Task",
+                    }),
+                  ],
+                }),
               ],
             }),
           ],
+        }),
+        node({
+          id: "tool-root-read",
+          kind: "tool_call",
+          toolUseId: "tool-use-root-read",
+          toolName: "Read",
         }),
       ],
     }),
@@ -92,5 +118,18 @@ describe("tree helpers", () => {
     assert.equal(findToolCallNodeId(tree, "tool-use-1"), "tool-1");
     assert.equal(findToolCallNodeId(tree, "tool-1"), "tool-1");
     assert.equal(findToolCallNodeId(tree, "missing"), null);
+  });
+
+  it("finds the first tool call by name, optionally scoped to an agent", () => {
+    assert.equal(findFirstToolCallByName(tree, "Read"), "tool-2");
+    assert.equal(
+      findFirstToolCallByName(tree, "Read", "session-1"),
+      "tool-root-read",
+    );
+    assert.equal(findFirstToolCallByName(tree, "Read", "sub-a"), "tool-2");
+    assert.equal(findFirstToolCallByName(tree, "Task", "sub-a"), "tool-3");
+    assert.equal(findFirstToolCallByName(tree, "Task", "session-1"), "tool-1");
+    assert.equal(findFirstToolCallByName(tree, "Bash"), null);
+    assert.equal(findFirstToolCallByName(tree, "Read", "missing"), null);
   });
 });
