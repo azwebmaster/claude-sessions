@@ -208,6 +208,8 @@ export interface AnalyzeProgressEvent {
 export interface AnalyzeResultEvent {
   type: "result";
   analysis: SessionAnalysis;
+  /** True when the analysis was served from the server cache. */
+  cached?: boolean;
 }
 
 export interface AnalyzeErrorEvent {

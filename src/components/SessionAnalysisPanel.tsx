@@ -9,10 +9,12 @@ import {
   Stack,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import CheckCircleOutlinedIcon from "@mui/icons-material/CheckCircleOutlined";
+import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import {
   ANALYZE_MODEL_ALIASES,
   DEFAULT_ANALYZE_MODEL_ALIAS,
@@ -22,8 +24,9 @@ import {
   type AnalyzeProgressStage,
   type SessionAnalysis,
 } from "@shared/types";
+import { formatAnalysisAgentPrompt } from "@shared/formatAnalysisPrompt";
 import { EmptyState, SectionPaper } from "./ui";
-import { apiAnalyzeStream } from "../lib/api";
+import { apiAnalyzeStream, apiGetCachedAnalysis } from "../lib/api";
 import { layout } from "../theme";
 
 const MODEL_LABELS: Record<AnalyzeModelAlias, string> = {
@@ -75,26 +78,38 @@ function stageIndex(stage: AnalyzeProgressStage | null): number {
 
 export function SessionAnalysisPanel({ sessionId }: Props) {
   const [analysis, setAnalysis] = useState<SessionAnalysis | null>(null);
+  const [fromCache, setFromCache] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [hydrating, setHydrating] = useState(true);
   const [progress, setProgress] = useState<AnalyzeProgressEvent | null>(null);
   const [seenStages, setSeenStages] = useState<AnalyzeProgressStage[]>([]);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
   const [model, setModel] = useState<AnalyzeModelAlias>(
     DEFAULT_ANALYZE_MODEL_ALIAS,
   );
   const abortRef = useRef<AbortController | null>(null);
+  const hydrateAbortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
+  const copyResetRef = useRef<number | null>(null);
 
   useEffect(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    hydrateAbortRef.current?.abort();
+    hydrateAbortRef.current = null;
     setAnalysis(null);
+    setFromCache(false);
     setError(null);
     setLoading(false);
+    setHydrating(true);
     setProgress(null);
     setSeenStages([]);
     setElapsedMs(0);
+    setCopyState("idle");
     startedAtRef.current = null;
   }, [sessionId]);
 
@@ -102,8 +117,45 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     return () => {
       abortRef.current?.abort();
       abortRef.current = null;
+      hydrateAbortRef.current?.abort();
+      hydrateAbortRef.current = null;
+      if (copyResetRef.current != null) {
+        window.clearTimeout(copyResetRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    hydrateAbortRef.current?.abort();
+    const controller = new AbortController();
+    hydrateAbortRef.current = controller;
+    setHydrating(true);
+    setAnalysis(null);
+    setFromCache(false);
+    void apiGetCachedAnalysis(sessionId, model, { signal: controller.signal })
+      .then((cached) => {
+        if (controller.signal.aborted) return;
+        if (cached) {
+          setAnalysis(cached);
+          setFromCache(true);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        // Cache miss / network blip should not block Analyze.
+        if (err instanceof Error && err.name === "AbortError") return;
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHydrating(false);
+      });
+    return () => {
+      controller.abort();
+      if (hydrateAbortRef.current === controller) {
+        hydrateAbortRef.current = null;
+      }
+    };
+  }, [sessionId, model]);
 
   useEffect(() => {
     if (!loading) return;
@@ -119,7 +171,9 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     abortRef.current?.abort();
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (force: boolean) => {
+    hydrateAbortRef.current?.abort();
+    hydrateAbortRef.current = null;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -133,10 +187,11 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     setProgress(null);
     setSeenStages([]);
     setElapsedMs(0);
+    setCopyState("idle");
     try {
       const result = await apiAnalyzeStream(
         sessionId,
-        { model },
+        { model, force },
         {
           signal: controller.signal,
           onEvent: (event) => {
@@ -151,7 +206,8 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
         },
       );
       if (!controller.signal.aborted) {
-        setAnalysis(result);
+        setAnalysis(result.analysis);
+        setFromCache(result.cached);
       }
     } catch (err) {
       if (controller.signal.aborted) {
@@ -171,12 +227,31 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     }
   };
 
+  const copyAgentPrompt = async () => {
+    if (!analysis) return;
+    const prompt = formatAnalysisAgentPrompt(analysis);
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    if (copyResetRef.current != null) {
+      window.clearTimeout(copyResetRef.current);
+    }
+    copyResetRef.current = window.setTimeout(() => {
+      setCopyState("idle");
+      copyResetRef.current = null;
+    }, 2000);
+  };
+
   const currentIdx = stageIndex(progress?.stage ?? null);
+  const hasRecommendations = (analysis?.recommendations.length ?? 0) > 0;
 
   return (
     <SectionPaper
       title="Agent SDK analysis"
-      description="Use the Claude Agent SDK to read session metadata/messages and produce optimization findings for this run. Inherits system auth from your Claude user settings, CLI login, or server environment."
+      description="Use the Claude Agent SDK to read session metadata/messages and produce optimization findings for this run. Inherits system auth from your Claude user settings, CLI login, or server environment. Results are cached until the session file changes."
       sx={{ mb: layout.sectionGap }}
     >
       <Stack
@@ -270,7 +345,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
                 )
               }
               onClick={() => {
-                void runAnalysis();
+                void runAnalysis(Boolean(analysis));
               }}
               disabled={loading}
               sx={{ flex: { xs: 1, sm: "none" } }}
@@ -291,11 +366,17 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
         </Alert>
       ) : null}
 
-      {!analysis && !error && !loading ? (
+      {!analysis && !error && !loading && !hydrating ? (
         <EmptyState sx={{ py: 3 }}>
           Run Agent SDK analysis to get context-bloat findings and concrete
           recommendations for this session.
         </EmptyState>
+      ) : null}
+
+      {!analysis && !error && !loading && hydrating ? (
+        <Box sx={{ py: 3, display: "flex", justifyContent: "center" }}>
+          <CircularProgress size={22} />
+        </Box>
       ) : null}
 
       {loading ? (
@@ -381,7 +462,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
         </Box>
       ) : null}
 
-      {analysis ? (
+      {analysis && !loading ? (
         <Stack spacing={2}>
           <Typography variant="body1">{analysis.summary}</Typography>
 
@@ -411,6 +492,9 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
                   : "Profile-only brief"
               }
             />
+            {fromCache ? (
+              <Chip size="small" variant="outlined" label="Cached" />
+            ) : null}
           </Stack>
 
           <Box>
@@ -465,9 +549,47 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
           </Box>
 
           <Box>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Recommendations
-            </Typography>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: "center",
+                justifyContent: "space-between",
+                mb: 1,
+                flexWrap: "wrap",
+                gap: 0.5,
+              }}
+            >
+              <Typography variant="subtitle2">Recommendations</Typography>
+              <Tooltip
+                title={
+                  copyState === "copied"
+                    ? "Copied"
+                    : copyState === "failed"
+                      ? "Copy failed"
+                      : "Copy as agent prompt"
+                }
+              >
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<ContentCopyOutlinedIcon fontSize="small" />}
+                    onClick={() => {
+                      void copyAgentPrompt();
+                    }}
+                    disabled={!hasRecommendations && !analysis.summary}
+                    aria-label="Copy suggestions as agent prompt"
+                  >
+                    {copyState === "copied"
+                      ? "Copied"
+                      : copyState === "failed"
+                        ? "Copy failed"
+                        : "Copy as agent prompt"}
+                  </Button>
+                </span>
+              </Tooltip>
+            </Stack>
             {analysis.recommendations.length === 0 ? (
               <Typography color="text.secondary" variant="body2">
                 No recommendations reported.
