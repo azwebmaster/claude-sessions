@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
+import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import {
   Alert,
   Box,
@@ -7,6 +9,7 @@ import {
   Chip,
   CircularProgress,
   FormControl,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
@@ -17,6 +20,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from "@mui/material";
@@ -31,6 +35,14 @@ import {
   matchesSessionFilters,
   type SessionListFilters,
 } from "../lib/sessionFilters";
+import {
+  DEFAULT_SESSION_SORT,
+  nextSessionSort,
+  SESSION_SORT_OPTIONS,
+  sortSessions,
+  type SessionListSort,
+  type SessionSortKey,
+} from "../lib/sessionSort";
 import { layout, monoFontFamily, motion } from "../theme";
 
 interface SessionsResponse {
@@ -235,6 +247,7 @@ export function SessionListPage() {
   const [turnsMin, setTurnsMin] = useState("");
   const [turnsMax, setTurnsMax] = useState("");
   const [maxAgeMs, setMaxAgeMs] = useState<number | null>(null);
+  const [sort, setSort] = useState<SessionListSort>(DEFAULT_SESSION_SORT);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,12 +286,32 @@ export function SessionListPage() {
   const filtered = useMemo(() => {
     if (!data) return [];
     const nowMs = Date.now();
-    return data.sessions.filter((s) => matchesSessionFilters(s, filters, nowMs));
-  }, [data, filters]);
+    const matched = data.sessions.filter((s) =>
+      matchesSessionFilters(s, filters, nowMs),
+    );
+    return sortSessions(matched, sort);
+  }, [data, filters, sort]);
 
   const metricsActive = hasActiveMetricFilters(filters);
   const textActive = query.trim().length > 0;
   const anyFilterActive = metricsActive || textActive;
+  const sortActive =
+    sort.key !== DEFAULT_SESSION_SORT.key ||
+    sort.direction !== DEFAULT_SESSION_SORT.direction;
+
+  const handleSortClick = (key: SessionSortKey) => {
+    setSort((current) => nextSessionSort(current, key));
+  };
+
+  const sortHeader = (key: SessionSortKey, label: string) => (
+    <TableSortLabel
+      active={sort.key === key}
+      direction={sort.key === key ? sort.direction : "asc"}
+      onClick={() => handleSortClick(key)}
+    >
+      {label}
+    </TableSortLabel>
+  );
 
   const clearMetricFilters = () => {
     setTokensMin("");
@@ -401,9 +434,72 @@ export function SessionListPage() {
               ))}
             </Select>
           </FormControl>
+          <Stack
+            direction="row"
+            spacing={0.5}
+            useFlexGap
+            sx={{
+              alignItems: "center",
+              display: { xs: "flex", [layout.tableMinBreakpoint]: "none" },
+            }}
+          >
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel id="session-sort-label">Sort</InputLabel>
+              <Select
+                labelId="session-sort-label"
+                label="Sort"
+                value={sort.key}
+                onChange={(e) => {
+                  const key = e.target.value as SessionSortKey;
+                  setSort((current) =>
+                    current.key === key
+                      ? current
+                      : nextSessionSort(current, key),
+                  );
+                }}
+                aria-label="Sort sessions by"
+              >
+                {SESSION_SORT_OPTIONS.map((option) => (
+                  <MenuItem key={option.key} value={option.key}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <IconButton
+              size="small"
+              onClick={() =>
+                setSort((current) => ({
+                  ...current,
+                  direction: current.direction === "asc" ? "desc" : "asc",
+                }))
+              }
+              aria-label={
+                sort.direction === "asc"
+                  ? "Sort ascending; click for descending"
+                  : "Sort descending; click for ascending"
+              }
+              sx={{ flexShrink: 0 }}
+            >
+              {sort.direction === "asc" ? (
+                <ArrowUpwardIcon fontSize="small" />
+              ) : (
+                <ArrowDownwardIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Stack>
           {metricsActive ? (
             <Button size="small" onClick={clearMetricFilters} sx={{ flexShrink: 0 }}>
               Clear metrics
+            </Button>
+          ) : null}
+          {sortActive ? (
+            <Button
+              size="small"
+              onClick={() => setSort(DEFAULT_SESSION_SORT)}
+              sx={{ flexShrink: 0 }}
+            >
+              Reset sort
             </Button>
           ) : null}
         </Stack>
@@ -443,13 +539,27 @@ export function SessionListPage() {
               <Table sx={{ minWidth: 720 }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Session</TableCell>
-                    <TableCell>Updated</TableCell>
-                    <TableCell>Tokens</TableCell>
-                    <TableCell>Peak ctx</TableCell>
-                    <TableCell>Turns</TableCell>
-                    <TableCell>Tools</TableCell>
-                    <TableCell>Agents</TableCell>
+                    <TableCell sortDirection={sort.key === "summary" ? sort.direction : false}>
+                      {sortHeader("summary", "Session")}
+                    </TableCell>
+                    <TableCell sortDirection={sort.key === "updatedAt" ? sort.direction : false}>
+                      {sortHeader("updatedAt", "Updated")}
+                    </TableCell>
+                    <TableCell sortDirection={sort.key === "tokens" ? sort.direction : false}>
+                      {sortHeader("tokens", "Tokens")}
+                    </TableCell>
+                    <TableCell sortDirection={sort.key === "peakCtx" ? sort.direction : false}>
+                      {sortHeader("peakCtx", "Peak ctx")}
+                    </TableCell>
+                    <TableCell sortDirection={sort.key === "turns" ? sort.direction : false}>
+                      {sortHeader("turns", "Turns")}
+                    </TableCell>
+                    <TableCell sortDirection={sort.key === "tools" ? sort.direction : false}>
+                      {sortHeader("tools", "Tools")}
+                    </TableCell>
+                    <TableCell sortDirection={sort.key === "agents" ? sort.direction : false}>
+                      {sortHeader("agents", "Agents")}
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
