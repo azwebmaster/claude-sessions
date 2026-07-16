@@ -56,3 +56,24 @@ export function findOwningAgentId(
   }
   return null;
 }
+
+/**
+ * Hierarchy node id for a tool invocation, matching `toolUseId` or the node id
+ * itself when they coincide.
+ */
+export function findToolCallNodeId(
+  root: TreeNode,
+  toolUseId: string,
+): string | null {
+  if (
+    root.kind === "tool_call" &&
+    (root.toolUseId === toolUseId || root.id === toolUseId)
+  ) {
+    return root.id;
+  }
+  for (const child of root.children) {
+    const found = findToolCallNodeId(child, toolUseId);
+    if (found) return found;
+  }
+  return null;
+}

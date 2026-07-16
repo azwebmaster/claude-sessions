@@ -6,6 +6,7 @@ import {
   findNode,
   findNodePath,
   findOwningAgentId,
+  findToolCallNodeId,
 } from "./tree";
 
 function node(
@@ -25,6 +26,7 @@ function node(
     preview: null,
     log: null,
     agentId: partial.agentId,
+    toolUseId: partial.toolUseId,
     children: partial.children ?? [],
   };
 }
@@ -41,6 +43,7 @@ const tree = node({
         node({
           id: "tool-1",
           kind: "tool_call",
+          toolUseId: "tool-use-1",
           children: [
             node({
               id: "sub-a",
@@ -79,8 +82,15 @@ describe("tree helpers", () => {
   it("resolves owning agent ids for nested focus", () => {
     assert.equal(findOwningAgentId(tree, "session-1"), "session-1");
     assert.equal(findOwningAgentId(tree, "turn-1"), "session-1");
+    assert.equal(findOwningAgentId(tree, "tool-1"), "session-1");
     assert.equal(findOwningAgentId(tree, "sub-a"), "sub-a");
     assert.equal(findOwningAgentId(tree, "sub-turn"), "sub-a");
     assert.equal(findOwningAgentId(tree, "missing"), null);
+  });
+
+  it("resolves hierarchy node ids from tool use ids", () => {
+    assert.equal(findToolCallNodeId(tree, "tool-use-1"), "tool-1");
+    assert.equal(findToolCallNodeId(tree, "tool-1"), "tool-1");
+    assert.equal(findToolCallNodeId(tree, "missing"), null);
   });
 });

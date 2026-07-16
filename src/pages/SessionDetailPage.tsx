@@ -15,7 +15,12 @@ import {
   contextSize,
 } from "@shared/types";
 import { api, formatDate } from "../lib/api";
-import { findAncestorIds, findNode, findOwningAgentId } from "../lib/tree";
+import {
+  findAncestorIds,
+  findNode,
+  findOwningAgentId,
+  findToolCallNodeId,
+} from "../lib/tree";
 import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
@@ -90,6 +95,19 @@ export function SessionDetailPage() {
     if (!detail || !focusedNodeId) return null;
     return findOwningAgentId(detail.tree, focusedNodeId);
   }, [detail, focusedNodeId]);
+
+  const focusedToolUseId = useMemo(() => {
+    if (!detail || !focusedNodeId) return null;
+    const node = findNode(detail.tree, focusedNodeId);
+    if (!node || node.kind !== "tool_call") return null;
+    return node.toolUseId ?? node.id;
+  }, [detail, focusedNodeId]);
+
+  const focusToolCall = (toolUseId: string) => {
+    if (!detail) return;
+    const nodeId = findToolCallNodeId(detail.tree, toolUseId) ?? toolUseId;
+    setFocusedNodeId(nodeId);
+  };
 
   const focusedLoadedContext = useMemo(() => {
     if (!detail?.loadedContext?.length) return null;
@@ -290,7 +308,7 @@ export function SessionDetailPage() {
       >
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line; use the chevron to expand or collapse. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn or Agents row." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line; use the chevron to expand or collapse. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
         >
           <Box
             sx={{
@@ -322,7 +340,7 @@ export function SessionDetailPage() {
         <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
           <SectionPaper
             title="Agents"
-            description="Click an agent to highlight it in the hierarchy and expand the path to that node."
+            description="Click an agent to highlight it in the hierarchy and expand the path to that node. Selecting a tool call highlights the agent that ran it."
           >
             <AgentBreakdown
               rows={detail.agentBreakdown}
@@ -333,9 +351,13 @@ export function SessionDetailPage() {
 
           <SectionPaper
             title="Tool impact on context"
-            description="Tools ranked by attributed context growth. Each tool shows its heaviest calls up front; expand for the full per-call list."
+            description="Tools ranked by attributed context growth. Click a tool or call to highlight it in the hierarchy and the agent that ran it."
           >
-            <ToolImpactList rows={detail.toolImpact} />
+            <ToolImpactList
+              rows={detail.toolImpact}
+              focusedToolUseId={focusedToolUseId}
+              onSelectCall={focusToolCall}
+            />
           </SectionPaper>
         </Stack>
       </Box>
