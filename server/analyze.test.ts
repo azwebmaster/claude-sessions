@@ -466,6 +466,7 @@ describe("analyzeSession", () => {
     assert.equal(seenEnv?.CLAUDE_CODE_OAUTH_TOKEN, "oauth-test");
     assert.equal(seenEnv?.HOME, "/tmp/claude-home");
     assert.equal(seenEnv?.CLAUDE_AGENT_SDK_CLIENT_APP, "claude-sessions");
+    assert.equal(seenEnv?.DISABLE_PROMPT_CACHING, "1");
   });
 
   it("buildAnalyzeEnv fills HOME when missing", () => {
@@ -473,6 +474,16 @@ describe("analyzeSession", () => {
     assert.ok(env.HOME && env.HOME.length > 0);
     assert.equal(env.PATH, "/bin");
     assert.equal(env.CLAUDE_AGENT_SDK_CLIENT_APP, "claude-sessions");
+    assert.equal(env.DISABLE_PROMPT_CACHING, "1");
+  });
+
+  it("buildAnalyzeEnv disables prompt caching even when inherited", () => {
+    const env = buildAnalyzeEnv({
+      PATH: "/bin",
+      HOME: "/home/user",
+      DISABLE_PROMPT_CACHING: "0",
+    });
+    assert.equal(env.DISABLE_PROMPT_CACHING, "1");
   });
 
   it("continues when loadExtras hangs past its budget", async () => {

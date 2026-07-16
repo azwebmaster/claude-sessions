@@ -132,6 +132,9 @@ export function buildAnalyzeEnv(
   if (!env.CLAUDE_AGENT_SDK_CLIENT_APP?.trim()) {
     env.CLAUDE_AGENT_SDK_CLIENT_APP = "claude-sessions";
   }
+  // Single-turn analyze never reuses the prompt prefix, so cache writes only
+  // raise input cost (cache_creation) with no later cache_read benefit.
+  env.DISABLE_PROMPT_CACHING = "1";
   return env;
 }
 
