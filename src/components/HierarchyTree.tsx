@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Chip, Collapse, Typography } from "@mui/material";
-import type { TreeNode, TreeNodeKind } from "@shared/types";
+import type { TokenUsage, TreeNode, TreeNodeKind } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { kindLabel } from "../lib/api";
 
@@ -23,6 +23,38 @@ const kindColors: Record<TreeNodeKind, { bg: string; color: string }> = {
   thinking: { bg: "rgba(0, 0, 0, 0.06)", color: "#616161" },
   system: { bg: "rgba(0, 0, 0, 0.06)", color: "#616161" },
 };
+
+/** Compact in / cache / out parts that make up an assistant usage chip. */
+function usageParts(u: TokenUsage): string | null {
+  const parts: string[] = [];
+  if (u.inputTokens > 0) parts.push(`in ${formatTokens(u.inputTokens)}`);
+  if (u.cacheCreationInputTokens > 0) {
+    parts.push(`cache+ ${formatTokens(u.cacheCreationInputTokens)}`);
+  }
+  if (u.cacheReadInputTokens > 0) {
+    parts.push(`cache ${formatTokens(u.cacheReadInputTokens)}`);
+  }
+  if (u.outputTokens > 0) parts.push(`out ${formatTokens(u.outputTokens)}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function metricsTitle(node: TreeNode): string | undefined {
+  if (node.usage && totalTokens(node.usage) > 0) {
+    const parts = usageParts(node.usage);
+    return [
+      "API usage for this turn (not a sum of child +N chips).",
+      "ctx = window occupancy from input + cache tokens.",
+      "Child +N values are estimated tool I/O sizes only.",
+      parts ? `Breakdown: ${parts}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (node.context && node.context.addedTokens > 0 && node.context.contextAfter == null) {
+    return "Estimated tokens for this tool input/result (~4 chars per token). Not the same as assistant ctx occupancy.";
+  }
+  return undefined;
+}
 
 export function HierarchyTree({
   node,
@@ -52,16 +84,21 @@ export function HierarchyTree({
     rowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [isFocused, focusedNodeId]);
 
-  const usageLabel =
-    node.usage && totalTokens(node.usage) > 0
-      ? formatTokens(totalTokens(node.usage))
-      : null;
+  const hasUsage = Boolean(node.usage && totalTokens(node.usage) > 0);
+  const usageLabel = hasUsage
+    ? `${formatTokens(totalTokens(node.usage!))} tok`
+    : null;
+  const breakdownLabel =
+    hasUsage && node.usage ? usageParts(node.usage) : null;
 
   const contextLabel = node.context
     ? node.context.contextAfter != null
-      ? `ctx ${formatTokens(node.context.contextAfter)}`
+      ? node.kind === "assistant_message" &&
+        node.context.contextDelta == null
+        ? `ctx ${formatTokens(node.context.contextAfter)} baseline`
+        : `ctx ${formatTokens(node.context.contextAfter)}`
       : node.context.addedTokens > 0
-        ? `+${formatTokens(node.context.addedTokens)}`
+        ? `+${formatTokens(node.context.addedTokens)} est`
         : null
     : null;
 
@@ -70,10 +107,11 @@ export function HierarchyTree({
     delta == null || delta === 0
       ? null
       : delta > 0
-        ? `↑${formatTokens(delta)}`
-        : `↓${formatTokens(Math.abs(delta))}`;
+        ? `↑${formatTokens(delta)} vs prior`
+        : `↓${formatTokens(Math.abs(delta))} vs prior`;
 
   const kindStyle = kindColors[node.kind] ?? kindColors.system;
+  const title = metricsTitle(node);
 
   return (
     <Box
@@ -151,15 +189,30 @@ export function HierarchyTree({
           ) : null}
         </Box>
         <Box
+          title={title}
           sx={{
             fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
             fontSize: "0.72rem",
             color: "text.secondary",
             textAlign: "right",
             whiteSpace: "nowrap",
+            maxWidth: { xs: "9.5rem", sm: "14rem" },
           }}
         >
-          {usageLabel ? <div>{usageLabel} tok</div> : null}
+          {usageLabel ? <div>{usageLabel}</div> : null}
+          {breakdownLabel ? (
+            <Box
+              component="div"
+              sx={{
+                color: "text.disabled",
+                fontSize: "0.65rem",
+                whiteSpace: "normal",
+                lineHeight: 1.3,
+              }}
+            >
+              {breakdownLabel}
+            </Box>
+          ) : null}
           {contextLabel ? <div>{contextLabel}</div> : null}
           {deltaLabel ? (
             <Box

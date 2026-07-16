@@ -89,11 +89,11 @@ describe("fixture session parse", () => {
 
     // Hierarchy tool nodes should carry the detail in the label, not just a bare name.
     const toolLabels: string[] = [];
-    const walk = (n: typeof detail.tree) => {
+    const collectToolLabels = (n: typeof detail.tree) => {
       if (n.kind === "tool_call") toolLabels.push(n.label);
-      for (const c of n.children) walk(c);
+      for (const c of n.children) collectToolLabels(c);
     };
-    walk(detail.tree);
+    collectToolLabels(detail.tree);
     assert.ok(toolLabels.some((l) => l.includes(" · ")));
     assert.ok(
       detail.toolImpact[0].contextGrowthAttributed >=
@@ -103,5 +103,23 @@ describe("fixture session parse", () => {
     );
     assert.ok(detail.agentBreakdown.some((a) => a.kind === "subagent"));
     assert.ok(contextSize(detail.meta.usage) > 0);
+
+    const assistants = detail.tree.children.filter(
+      (n) => n.kind === "assistant_message" && n.usage,
+    );
+    assert.ok(assistants.length >= 2);
+    // First billed turn is baseline occupancy (prompt/cache), not a vs-prior delta.
+    assert.equal(assistants[0].context?.contextDelta, null);
+    assert.ok((assistants[0].context?.contextAfter ?? 0) > 0);
+    assert.ok(
+      (assistants[0].usage?.cacheCreationInputTokens ?? 0) +
+        (assistants[0].usage?.inputTokens ?? 0) >
+        (assistants[0].usage?.outputTokens ?? 0),
+      "first-turn ctx is dominated by input/cache, not output or tool +N chips",
+    );
+    // Later turns report growth vs prior context.
+    assert.ok(
+      assistants.slice(1).some((a) => (a.context?.contextDelta ?? 0) !== 0),
+    );
   });
 });
