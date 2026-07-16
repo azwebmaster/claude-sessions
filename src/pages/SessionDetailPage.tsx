@@ -308,7 +308,7 @@ export function SessionDetailPage() {
       >
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line; use the chevron to expand or collapse. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Click a node to highlight it; use the chevron to expand or collapse; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
         >
           <Box
             sx={{
@@ -330,8 +330,9 @@ export function SessionDetailPage() {
               forceOpenIds={forceOpenIds}
               onFocusNode={(nodeId) => {
                 setFocusedNodeId(nodeId);
-                const node = findNode(detail.tree, nodeId);
-                if (node?.log) openLogModal(node.log);
+              }}
+              onViewLog={(node) => {
+                if (node.log) openLogModal(node.log);
               }}
             />
           </Box>
