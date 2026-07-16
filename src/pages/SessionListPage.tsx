@@ -115,12 +115,25 @@ function SessionCard({
           ] as const
         ).map(([label, value]) => (
           <Box key={label} sx={{ minWidth: 0 }}>
-            <Typography variant="overline" color="text.secondary" sx={{ fontSize: "0.62rem" }}>
+            <Typography
+              component="div"
+              variant="overline"
+              color="text.secondary"
+              sx={{ display: "block", fontSize: "0.62rem", lineHeight: 1.25 }}
+            >
               {label}
             </Typography>
             <Typography
+              component="div"
               variant="mono"
-              sx={{ fontSize: "0.8rem", display: "block", wordBreak: "break-word" }}
+              title={value}
+              sx={{
+                display: "block",
+                fontSize: "0.8rem",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
             >
               {value}
             </Typography>
