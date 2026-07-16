@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link as RouterLink, useParams } from "react-router-dom";
+import {
+  Box,
+  Link,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
 import type { SessionDetail } from "@shared/types";
 import {
   formatTokens,
@@ -11,6 +18,44 @@ import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
+
+const mono = '"IBM Plex Mono", ui-monospace, monospace';
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <Box
+      sx={{
+        bgcolor: "rgba(255, 255, 255, 0.08)",
+        border: "1px solid rgba(255, 255, 255, 0.12)",
+        borderRadius: 1.5,
+        px: 1.5,
+        py: 1.25,
+        color: "#eef7f1",
+      }}
+    >
+      <Typography
+        sx={{
+          fontSize: "0.68rem",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          opacity: 0.7,
+        }}
+      >
+        {label}
+      </Typography>
+      <Typography
+        sx={{
+          mt: 0.25,
+          fontFamily: mono,
+          fontSize: "1.05rem",
+          fontWeight: 600,
+        }}
+      >
+        {value}
+      </Typography>
+    </Box>
+  );
+}
 
 export function SessionDetailPage() {
   const { id } = useParams();
@@ -34,107 +79,167 @@ export function SessionDetailPage() {
     };
   }, [id]);
 
+  const backLink = (
+    <Link
+      component={RouterLink}
+      to="/"
+      underline="hover"
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        color: "rgba(236, 245, 238, 0.85)",
+        mb: 1.5,
+        fontSize: "0.9rem",
+        "&:hover": { color: "#fff" },
+      }}
+    >
+      ← All sessions
+    </Link>
+  );
+
   if (error) {
     return (
-      <div>
-        <Link className="back-link" to="/">
-          ← All sessions
-        </Link>
-        <div className="panel panel-pad error">Failed to load session: {error}</div>
-      </div>
+      <Box>
+        {backLink}
+        <Paper sx={{ p: 2.5 }}>
+          <Typography color="error">Failed to load session: {error}</Typography>
+        </Paper>
+      </Box>
     );
   }
 
   if (!detail) {
     return (
-      <div>
-        <Link className="back-link" to="/">
-          ← All sessions
-        </Link>
-        <div className="panel panel-pad loading">Building session profile…</div>
-      </div>
+      <Box>
+        {backLink}
+        <Paper sx={{ p: 2.5 }}>
+          <Typography color="text.secondary" align="center">
+            Building session profile…
+          </Typography>
+        </Paper>
+      </Box>
     );
   }
 
   const { meta } = detail;
 
   return (
-    <div>
-      <Link className="back-link" to="/">
-        ← All sessions
-      </Link>
+    <Box>
+      {backLink}
 
-      <div className="detail-header">
-        <div>
-          <h1 className="detail-title">
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        spacing={2}
+        sx={{
+          justifyContent: "space-between",
+          mb: 2,
+          animation: "rise 400ms ease both",
+        }}
+      >
+        <Box>
+          <Typography
+            variant="h1"
+            sx={{
+              m: 0,
+              color: "#f3faf5",
+              fontSize: { xs: "1.35rem", md: "1.9rem" },
+              maxWidth: "40rem",
+            }}
+          >
             {meta.summary ?? "Untitled session"}
-          </h1>
-          <p className="detail-sub">
+          </Typography>
+          <Typography
+            sx={{
+              mt: 0.5,
+              color: "rgba(236, 245, 238, 0.7)",
+              fontFamily: mono,
+              fontSize: "0.78rem",
+            }}
+          >
             {meta.projectPath}
             {meta.gitBranch ? ` · ${meta.gitBranch}` : ""}
             {" · "}
             {formatDate(meta.startedAt)} → {formatDate(meta.updatedAt)}
-          </p>
-        </div>
-        <div className="stat-grid">
-          <div className="stat">
-            <div className="stat-label">Total tokens</div>
-            <div className="stat-value">
-              {formatTokens(totalTokens(meta.usage))}
-            </div>
-          </div>
-          <div className="stat">
-            <div className="stat-label">Peak context</div>
-            <div className="stat-value">
-              {formatTokens(meta.peakContextTokens)}
-            </div>
-          </div>
-          <div className="stat">
-            <div className="stat-label">Cache read</div>
-            <div className="stat-value">
-              {formatTokens(meta.usage.cacheReadInputTokens)}
-            </div>
-          </div>
-          <div className="stat">
-            <div className="stat-label">Tool calls</div>
-            <div className="stat-value">{meta.toolCallCount}</div>
-          </div>
-        </div>
-      </div>
+          </Typography>
+        </Box>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "repeat(2, minmax(0, 1fr))",
+              sm: "repeat(4, minmax(0, 1fr))",
+            },
+            gap: 0.75,
+          }}
+        >
+          <Stat label="Total tokens" value={formatTokens(totalTokens(meta.usage))} />
+          <Stat label="Peak context" value={formatTokens(meta.peakContextTokens)} />
+          <Stat
+            label="Cache read"
+            value={formatTokens(meta.usage.cacheReadInputTokens)}
+          />
+          <Stat label="Tool calls" value={String(meta.toolCallCount)} />
+        </Box>
+      </Stack>
 
-      <div className="detail-layout">
-        <div className="panel panel-pad">
-          <h2 className="section-title">Agent & tool hierarchy</h2>
-          <p className="muted" style={{ marginTop: 0, marginBottom: "0.9rem" }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "1.15fr 0.85fr" },
+          gap: 2,
+          animation: "rise 450ms ease both",
+        }}
+      >
+        <Paper sx={{ p: 2.5 }}>
+          <Typography variant="h2" sx={{ mb: 1.5 }}>
+            Agent & tool hierarchy
+          </Typography>
+          <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
             Root agent → tool calls → results / subagents. Token chips show
             usage; result nodes estimate how much each tool added to context.
-          </p>
-          <div className="tree">
+          </Typography>
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 0.5,
+              maxHeight: "70vh",
+              overflow: "auto",
+              pr: 0.5,
+            }}
+          >
             <HierarchyTree node={detail.tree} defaultOpen />
-          </div>
-        </div>
+          </Box>
+        </Paper>
 
-        <div style={{ display: "grid", gap: "1rem" }}>
-          <div className="panel panel-pad">
-            <h2 className="section-title">Context size over turns</h2>
-            <p className="muted" style={{ marginTop: 0, marginBottom: "0.75rem" }}>
+        <Stack spacing={2}>
+          <Paper sx={{ p: 2.5 }}>
+            <Typography variant="h2" sx={{ mb: 1.5 }}>
+              Context size over turns
+            </Typography>
+            <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
               Each bar is an assistant turn&apos;s context occupancy (
               {formatTokens(contextSize(meta.usage))} cumulative input+cache).
-            </p>
+            </Typography>
             <ContextChart points={detail.timeline} />
-          </div>
+          </Paper>
 
-          <div className="panel panel-pad">
-            <h2 className="section-title">Agents</h2>
+          <Paper sx={{ p: 2.5 }}>
+            <Typography variant="h2" sx={{ mb: 1.5 }}>
+              Agents
+            </Typography>
             <AgentBreakdown rows={detail.agentBreakdown} />
-          </div>
+          </Paper>
 
-          <div className="panel panel-pad">
-            <h2 className="section-title">Tool impact on context</h2>
+          <Paper sx={{ p: 2.5 }}>
+            <Typography variant="h2" sx={{ mb: 1.5 }}>
+              Tool impact on context
+            </Typography>
             <ToolImpactList rows={detail.toolImpact} />
-          </div>
-        </div>
-      </div>
-    </div>
+          </Paper>
+        </Stack>
+      </Box>
+    </Box>
   );
 }

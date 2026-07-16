@@ -17,7 +17,10 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@hono/node-server": "^1.14.4",
+    "@mui/material": "^9.2.0",
     "hono": "^4.8.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
