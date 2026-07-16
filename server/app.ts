@@ -12,7 +12,12 @@ import {
   loadSessionRaw,
 } from "./sessions.js";
 import { buildSessionDetail } from "./parser.js";
-import { AnalyzeSessionError, analyzeSession } from "./analyze.js";
+import { AnalyzeSessionError, resolveAnalyzeModel } from "./analyze.js";
+import {
+  analysisFingerprint,
+  getCachedAnalysis,
+} from "./analysisCache.js";
+import { runAnalyzeWithCache } from "./runAnalyzeWithCache.js";
 import type { AnalyzeStreamEvent } from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,6 +79,34 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     });
   });
 
+  app.get("/api/sessions/:id/analyze", async (c) => {
+    const id = c.req.param("id");
+    const loaded = await loadSessionRaw(id);
+    if (!loaded) {
+      return c.json({ error: "Session not found", id }, 404);
+    }
+
+    let modelAlias;
+    try {
+      modelAlias = resolveAnalyzeModel(c.req.query("model"));
+    } catch (err) {
+      if (err instanceof AnalyzeSessionError) {
+        return c.json({ error: err.message, code: err.code }, 400);
+      }
+      throw err;
+    }
+
+    const fingerprint = analysisFingerprint(loaded.file);
+    const analysis = getCachedAnalysis(id, modelAlias, fingerprint);
+    if (!analysis) {
+      return c.json(
+        { error: "No cached analysis", id, model: modelAlias },
+        404,
+      );
+    }
+    return c.json({ analysis, cached: true as const, model: modelAlias });
+  });
+
   app.post("/api/sessions/:id/analyze", async (c) => {
     const id = c.req.param("id");
     const loaded = await loadSessionRaw(id);
@@ -82,14 +115,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
 
     let model: string | undefined;
+    let force = c.req.query("force") === "1";
     try {
       const body = await c.req.json();
-      if (
-        body &&
-        typeof body === "object" &&
-        typeof (body as { model?: unknown }).model === "string"
-      ) {
-        model = (body as { model: string }).model.trim() || undefined;
+      if (body && typeof body === "object") {
+        const record = body as { model?: unknown; force?: unknown };
+        if (typeof record.model === "string") {
+          model = record.model.trim() || undefined;
+        }
+        if (record.force === true) force = true;
       }
     } catch {
       // empty / non-JSON body is fine
@@ -112,11 +146,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await out.write(`${JSON.stringify(event)}\n`);
         };
         try {
-          const analysis = await analyzeSession(detail, {
-            model,
-            onProgress: (event) => writeEvent(event),
-          });
-          await writeEvent({ type: "result", analysis });
+          const { analysis, cached } = await runAnalyzeWithCache(
+            detail,
+            loaded.file,
+            {
+              model,
+              force,
+              onProgress: (event) => writeEvent(event),
+            },
+          );
+          await writeEvent({ type: "result", analysis, cached });
         } catch (err) {
           if (err instanceof AnalyzeSessionError) {
             await writeEvent({
@@ -137,7 +176,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
 
     try {
-      const analysis = await analyzeSession(detail, { model });
+      const { analysis, cached } = await runAnalyzeWithCache(
+        detail,
+        loaded.file,
+        { model, force },
+      );
+      c.header("X-Cache", cached ? "HIT" : "MISS");
       return c.json(analysis);
     } catch (err) {
       if (err instanceof AnalyzeSessionError) {

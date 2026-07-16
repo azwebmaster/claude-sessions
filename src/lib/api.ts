@@ -1,4 +1,8 @@
-import type { AnalyzeStreamEvent, SessionAnalysis } from "@shared/types";
+import type {
+  AnalyzeModelAlias,
+  AnalyzeStreamEvent,
+  SessionAnalysis,
+} from "@shared/types";
 
 async function readError(res: Response): Promise<string> {
   const body = await res.text();
@@ -47,15 +51,51 @@ export type AnalyzeStreamHandlers = {
   onEvent?: (event: AnalyzeStreamEvent) => void;
 };
 
+export type AnalyzeStreamResult = {
+  analysis: SessionAnalysis;
+  cached: boolean;
+};
+
+export type AnalyzeRequestBody = {
+  model?: AnalyzeModelAlias;
+  /** Bypass server cache and run a fresh Agent SDK query. */
+  force?: boolean;
+};
+
+/**
+ * GET a fingerprint-matched cached analysis, or null when none is stored.
+ */
+export async function apiGetCachedAnalysis(
+  sessionId: string,
+  model?: AnalyzeModelAlias,
+  options: ApiPostOptions = {},
+): Promise<SessionAnalysis | null> {
+  const params = new URLSearchParams();
+  if (model) params.set("model", model);
+  const qs = params.toString();
+  const res = await fetch(
+    `/api/sessions/${sessionId}/analyze${qs ? `?${qs}` : ""}`,
+    { signal: options.signal },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(await readError(res));
+  }
+  const body = (await res.json()) as {
+    analysis?: SessionAnalysis;
+  };
+  return body.analysis ?? null;
+}
+
 /**
  * POST analyze with an NDJSON progress stream.
  * Resolves with the final `result` analysis, or throws on `error` / HTTP failure.
  */
 export async function apiAnalyzeStream(
   sessionId: string,
-  body: unknown = {},
+  body: AnalyzeRequestBody = {},
   handlers: AnalyzeStreamHandlers = {},
-): Promise<SessionAnalysis> {
+): Promise<AnalyzeStreamResult> {
   const res = await fetch(`/api/sessions/${sessionId}/analyze?stream=1`, {
     method: "POST",
     headers: {
@@ -77,6 +117,7 @@ export async function apiAnalyzeStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let analysis: SessionAnalysis | null = null;
+  let cached = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -97,6 +138,7 @@ export async function apiAnalyzeStream(
       handlers.onEvent?.(event);
       if (event.type === "result") {
         analysis = event.analysis;
+        cached = event.cached === true;
       } else if (event.type === "error") {
         throw new Error(event.error);
       }
@@ -107,14 +149,18 @@ export async function apiAnalyzeStream(
   if (trailing) {
     const event = JSON.parse(trailing) as AnalyzeStreamEvent;
     handlers.onEvent?.(event);
-    if (event.type === "result") analysis = event.analysis;
-    else if (event.type === "error") throw new Error(event.error);
+    if (event.type === "result") {
+      analysis = event.analysis;
+      cached = event.cached === true;
+    } else if (event.type === "error") {
+      throw new Error(event.error);
+    }
   }
 
   if (!analysis) {
     throw new Error("Analyze stream ended without a result");
   }
-  return analysis;
+  return { analysis, cached };
 }
 
 export function formatDate(iso: string | null): string {

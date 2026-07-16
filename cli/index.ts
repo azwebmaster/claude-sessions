@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { startServer } from "../server/serve.js";
-import {
-  AnalyzeSessionError,
-  analyzeSession,
-} from "../server/analyze.js";
+import { AnalyzeSessionError } from "../server/analyze.js";
+import { runAnalyzeWithCache } from "../server/runAnalyzeWithCache.js";
 import { buildSessionDetail } from "../server/parser.js";
 import { listSessions, loadSessionRaw } from "../server/sessions.js";
 
@@ -25,6 +23,7 @@ Options for serve:
 Options for analyze:
   -m, --model <alias>   Model alias for Agent SDK analysis: opus, sonnet, or haiku
                         (default: haiku, or $CLAUDE_SESSIONS_ANALYZE_MODEL)
+  -f, --force           Bypass cached analysis and run a fresh Agent SDK query
 
 Global:
   -h, --help            Show this help message
@@ -35,12 +34,14 @@ Examples:
   ${PACKAGE_NAME} analyze
   ${PACKAGE_NAME} analyze 11111111-1111-1111-1111-111111111111
   ${PACKAGE_NAME} analyze --model haiku
+  ${PACKAGE_NAME} analyze --force
 `);
 }
 
 async function runAnalyze(options: {
   sessionId?: string;
   model?: string;
+  force?: boolean;
 }): Promise<void> {
   let sessionId = options.sessionId;
   if (!sessionId) {
@@ -66,13 +67,21 @@ async function runAnalyze(options: {
 
   const detail = buildSessionDetail(loaded.file, loaded.parsed);
   try {
-    const analysis = await analyzeSession(detail, {
-      model: options.model,
-      onProgress: (event) => {
-        const sec = (event.elapsedMs / 1000).toFixed(1);
-        console.error(`[${sec}s] ${event.stage}: ${event.message}`);
+    const { analysis, cached } = await runAnalyzeWithCache(
+      detail,
+      loaded.file,
+      {
+        model: options.model,
+        force: options.force,
+        onProgress: (event) => {
+          const sec = (event.elapsedMs / 1000).toFixed(1);
+          console.error(`[${sec}s] ${event.stage}: ${event.message}`);
+        },
       },
-    });
+    );
+    if (cached) {
+      console.error("Using cached analysis (pass --force to re-run).");
+    }
     console.log(JSON.stringify(analysis, null, 2));
   } catch (err) {
     if (err instanceof AnalyzeSessionError) {
@@ -94,6 +103,7 @@ async function main(): Promise<void> {
       port: { type: "string", short: "p" },
       host: { type: "string", short: "H" },
       model: { type: "string", short: "m" },
+      force: { type: "boolean", short: "f", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -123,6 +133,7 @@ async function main(): Promise<void> {
     await runAnalyze({
       sessionId,
       model: values.model,
+      force: values.force,
     });
     return;
   }
