@@ -210,7 +210,7 @@ export function SessionDetailPage() {
           minWidth: 0,
         }}
       >
-        <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
+        <Box sx={{ minWidth: 0, flex: "1 1 auto", pr: { lg: 1 } }}>
           <Typography
             variant="h1"
             sx={{
@@ -224,13 +224,23 @@ export function SessionDetailPage() {
             {meta.summary ?? "Untitled session"}
           </Typography>
           <Typography
+            component="div"
             variant="mono"
             color="text.secondary"
+            title={[
+              meta.projectPath,
+              meta.gitBranch,
+              `${formatDate(meta.startedAt)} → ${formatDate(meta.updatedAt)}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
             sx={{
               mt: 0.5,
               fontSize: { xs: "0.7rem", sm: "0.78rem" },
-              wordBreak: "break-word",
               lineHeight: 1.4,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
             {meta.projectPath}
@@ -247,7 +257,10 @@ export function SessionDetailPage() {
               mt: 0.75,
               fontSize: "0.72rem",
               lineHeight: 1.4,
-              wordBreak: "break-all",
+              display: "flex",
+              alignItems: "baseline",
+              gap: 0.75,
+              minWidth: 0,
             }}
           >
             <Box
@@ -257,12 +270,22 @@ export function SessionDetailPage() {
                 textTransform: "uppercase",
                 letterSpacing: "0.04em",
                 fontSize: "0.65rem",
-                mr: 0.75,
+                flexShrink: 0,
               }}
             >
               Log
             </Box>
-            {meta.filePath}
+            <Box
+              component="span"
+              sx={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
+              {meta.filePath}
+            </Box>
           </Typography>
         </Box>
         <Box
@@ -270,12 +293,12 @@ export function SessionDetailPage() {
             display: "grid",
             gridTemplateColumns: {
               xs: "repeat(2, minmax(0, 1fr))",
-              sm: "repeat(4, minmax(0, 1fr))",
-              lg: "repeat(2, minmax(0, 1fr))",
-              xl: "repeat(4, minmax(0, 1fr))",
+              sm: "repeat(4, minmax(7.5rem, 1fr))",
+              lg: "repeat(2, minmax(7.5rem, 1fr))",
+              xl: "repeat(4, minmax(7.5rem, 1fr))",
             },
             gap: 0.75,
-            flex: { lg: "0 1 22rem", xl: "0 1 28rem" },
+            flex: { lg: "0 0 18rem", xl: "0 0 34rem" },
             width: { xs: "100%", lg: "auto" },
             minWidth: 0,
           }}
