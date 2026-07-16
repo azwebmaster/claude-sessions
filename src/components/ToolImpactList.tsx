@@ -22,7 +22,18 @@ function sharePercent(value: number, total: number): number {
   return Math.round((value / total) * 100);
 }
 
+function callHeadline(call: ToolImpactCall): string {
+  return (
+    call.inputPreview ??
+    call.resultPreview ??
+    `Call ${shortId(call.toolUseId)}`
+  );
+}
+
 function CallDetail({ call }: { call: ToolImpactCall }) {
+  const headline = call.inputPreview;
+  const supporting = call.resultPreview;
+
   return (
     <Box
       sx={{
@@ -65,9 +76,9 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
             wordBreak: "break-word",
           }}
         >
-          {call.inputPreview ?? "No input preview"}
+          {headline ?? "No input captured"}
         </Typography>
-        {call.resultPreview ? (
+        {supporting ? (
           <Typography
             sx={{
               mt: 0.35,
@@ -77,9 +88,20 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
               wordBreak: "break-word",
             }}
           >
-            {call.resultPreview}
+            {supporting}
           </Typography>
-        ) : null}
+        ) : (
+          <Typography
+            sx={{
+              mt: 0.35,
+              color: "text.secondary",
+              fontSize: "0.78rem",
+              fontStyle: "italic",
+            }}
+          >
+            No result text captured for this call.
+          </Typography>
+        )}
         {call.timestamp ? (
           <Typography
             sx={{
@@ -109,6 +131,54 @@ function CallDetail({ call }: { call: ToolImpactCall }) {
         ) : null}
       </Box>
     </Box>
+  );
+}
+
+function TopCallPreview({ calls }: { calls: ToolImpactCall[] }) {
+  const top = calls.slice(0, 3);
+  if (top.length === 0) {
+    return (
+      <Typography
+        sx={{
+          mt: 0.5,
+          color: "text.secondary",
+          fontSize: "0.75rem",
+          fontStyle: "italic",
+        }}
+      >
+        No per-call details available
+      </Typography>
+    );
+  }
+
+  return (
+    <Stack spacing={0.35} sx={{ mt: 0.65 }}>
+      {top.map((call) => (
+        <Typography
+          key={call.toolUseId}
+          sx={{
+            color: "text.secondary",
+            fontSize: "0.75rem",
+            lineHeight: 1.35,
+            wordBreak: "break-word",
+          }}
+        >
+          <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+            {formatTokens(call.resultTokens)}
+          </Box>
+          {" · "}
+          {callHeadline(call)}
+        </Typography>
+      ))}
+      {calls.length > top.length ? (
+        <Typography
+          sx={{ color: "text.secondary", fontSize: "0.72rem", fontFamily: mono }}
+        >
+          +{calls.length - top.length} more call
+          {calls.length - top.length === 1 ? "" : "s"}
+        </Typography>
+      ) : null}
+    </Stack>
   );
 }
 
@@ -168,17 +238,28 @@ export function ToolImpactList({ rows }: Props) {
           >
             +{formatTokens(top.contextGrowthAttributed)} attributed
             {topShare > 0 ? ` · ${topShare}% of tool-driven growth` : ""}
-            {" · "}
-            click a tool for call-level detail
           </Typography>
+          {top.calls[0] ? (
+            <Typography
+              sx={{
+                mt: 0.5,
+                color: "text.primary",
+                fontSize: "0.8rem",
+                wordBreak: "break-word",
+              }}
+            >
+              Heaviest call: {callHeadline(top.calls[0])}
+            </Typography>
+          ) : null}
         </Box>
       ) : (
         <Typography color="text.secondary" sx={{ fontSize: "0.78rem", px: 0.25 }}>
-          Ranked by estimated result size. Click a tool for call-level detail.
+          Ranked by estimated result size. Top calls are listed under each tool.
         </Typography>
       )}
 
       {rows.map((row, index) => {
+        const calls = row.calls ?? [];
         const open = selected === row.toolName;
         const growthShare = sharePercent(
           row.contextGrowthAttributed,
@@ -276,6 +357,7 @@ export function ToolImpactList({ rows }: Props) {
                     borderRadius: 1,
                   }}
                 />
+                {!open ? <TopCallPreview calls={calls} /> : null}
               </Box>
               <Box sx={{ fontFamily: mono, textAlign: "right" }}>
                 {row.contextGrowthAttributed > 0 ? (
@@ -329,12 +411,19 @@ export function ToolImpactList({ rows }: Props) {
                     letterSpacing: "0.04em",
                   }}
                 >
-                  {row.calls.length} call
-                  {row.calls.length === 1 ? "" : "s"} · heaviest first
+                  {calls.length} call
+                  {calls.length === 1 ? "" : "s"} · heaviest first
                 </Typography>
-                {row.calls.map((call) => (
-                  <CallDetail key={call.toolUseId} call={call} />
-                ))}
+                {calls.length === 0 ? (
+                  <Typography color="text.secondary" sx={{ fontSize: "0.8rem" }}>
+                    This tool is ranked from aggregate stats, but no individual
+                    call payloads were found in the transcript.
+                  </Typography>
+                ) : (
+                  calls.map((call) => (
+                    <CallDetail key={call.toolUseId} call={call} />
+                  ))
+                )}
               </Stack>
             </Collapse>
           </Box>
