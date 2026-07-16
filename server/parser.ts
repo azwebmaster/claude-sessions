@@ -3,6 +3,7 @@ import path from "node:path";
 import type {
   AgentBreakdownRow,
   ContextTimelinePoint,
+  LogLineRef,
   SessionDetail,
   SessionListItem,
   TokenUsage,
@@ -63,6 +64,14 @@ interface RawEntry {
   [key: string]: unknown;
 }
 
+/** Parsed JSONL row with source location for click-through */
+interface SourcedEntry {
+  entry: RawEntry;
+  filePath: string;
+  line: number;
+  raw: string;
+}
+
 export interface RawSessionParse {
   summary: string | null;
   startedAt: string | null;
@@ -75,8 +84,16 @@ export interface RawSessionParse {
   cwd: string | null;
   usage: TokenUsage;
   peakContextTokens: number;
-  entries: RawEntry[];
-  subagentFiles: { agentId: string; filePath: string; entries: RawEntry[] }[];
+  entries: SourcedEntry[];
+  subagentFiles: { agentId: string; filePath: string; entries: SourcedEntry[] }[];
+}
+
+function toLogRef(source: SourcedEntry): LogLineRef {
+  return {
+    filePath: source.filePath,
+    line: source.line,
+    raw: source.raw,
+  };
 }
 
 function toUsage(raw?: RawUsage | null): TokenUsage {
@@ -269,14 +286,21 @@ function applyToolResult(opts: {
   opts.pending.push({ toolName, call });
 }
 
-async function readEntries(filePath: string): Promise<RawEntry[]> {
+async function readEntries(filePath: string): Promise<SourcedEntry[]> {
   const text = await readFile(filePath, "utf8");
-  const entries: RawEntry[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
+  const entries: SourcedEntry[] = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
     if (!trimmed) continue;
     try {
-      entries.push(JSON.parse(trimmed) as RawEntry);
+      entries.push({
+        entry: JSON.parse(trimmed) as RawEntry,
+        filePath,
+        line: i + 1,
+        raw: trimmed,
+      });
     } catch {
       // ignore corrupt lines
     }
@@ -312,8 +336,8 @@ export async function countSubagentFiles(
 
 async function loadSubagents(
   sessionFilePath: string,
-): Promise<{ agentId: string; filePath: string; entries: RawEntry[] }[]> {
-  const results: { agentId: string; filePath: string; entries: RawEntry[] }[] =
+): Promise<{ agentId: string; filePath: string; entries: SourcedEntry[] }[]> {
+  const results: { agentId: string; filePath: string; entries: SourcedEntry[] }[] =
     [];
   const seen = new Set<string>();
 
@@ -402,7 +426,7 @@ export async function parseSessionFile(
     }
   };
 
-  for (const entry of entries) consider(entry);
+  for (const sourced of entries) consider(sourced.entry);
 
   // Subagent transcripts contribute agent identity / counts, but their token
   // usage is reported separately in the agent breakdown (not double-counted
@@ -412,7 +436,8 @@ export async function parseSessionFile(
   }
 
   // Also detect Task/Agent tool launches as subagents even without files
-  for (const entry of entries) {
+  for (const sourced of entries) {
+    const entry = sourced.entry;
     if (entry.type !== "assistant") continue;
     for (const block of asBlocks(entry.message?.content)) {
       if (block.type !== "tool_use") continue;
@@ -429,7 +454,8 @@ export async function parseSessionFile(
     }
   }
 
-  const taskLaunches = entries.reduce((n, entry) => {
+  const taskLaunches = entries.reduce((n, sourced) => {
+    const entry = sourced.entry;
     if (entry.type !== "assistant") return n;
     return (
       n +
@@ -492,7 +518,7 @@ function ensureToolRow(
 }
 
 function buildToolImpact(
-  entries: RawEntry[],
+  sourcedEntries: SourcedEntry[],
 ): ToolImpactRow[] {
   const byTool = new Map<
     string,
@@ -512,7 +538,7 @@ function buildToolImpact(
   let lastContext: number | null = null;
   let pending: { toolName: string; call: ToolImpactCall }[] = [];
 
-  for (const entry of entries) {
+  for (const { entry } of sourcedEntries) {
     if (entry.type === "assistant") {
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use" && block.id && block.name) {
@@ -645,11 +671,12 @@ function buildToolImpact(
     );
 }
 
-function buildTimeline(entries: RawEntry[]): ContextTimelinePoint[] {
+function buildTimeline(sourcedEntries: SourcedEntry[]): ContextTimelinePoint[] {
   const points: ContextTimelinePoint[] = [];
   let turn = 0;
   let assistantIndex = 0;
-  for (const entry of entries) {
+  for (const sourced of sourcedEntries) {
+    const entry = sourced.entry;
     if (entry.type !== "assistant") continue;
     const nodeId = entry.uuid ?? `assistant-${assistantIndex}`;
     assistantIndex += 1;
@@ -675,13 +702,14 @@ function buildTimeline(entries: RawEntry[]): ContextTimelinePoint[] {
       cacheCreationTokens: u.cacheCreationInputTokens,
       outputTokens: u.outputTokens,
       toolName: tools[0] ?? null,
+      log: toLogRef(sourced),
     });
   }
   return points;
 }
 
 function buildAgentTreeFromEntries(
-  entries: RawEntry[],
+  sourcedEntries: SourcedEntry[],
   opts: {
     id: string;
     label: string;
@@ -693,11 +721,12 @@ function buildAgentTreeFromEntries(
     id: opts.id,
     kind: opts.kind,
     label: opts.label,
-    timestamp: entries[0]?.timestamp ?? null,
+    timestamp: sourcedEntries[0]?.entry.timestamp ?? null,
     model: opts.model,
     usage: emptyUsage(),
     context: null,
     preview: null,
+    log: null,
     agentId: opts.id,
     children: [],
   };
@@ -710,7 +739,10 @@ function buildAgentTreeFromEntries(
   let assistantIndex = 0;
   let lastContext: number | null = null;
 
-  for (const entry of entries) {
+  for (const sourced of sourcedEntries) {
+    const entry = sourced.entry;
+    const log = toLogRef(sourced);
+
     if (entry.type === "user") {
       const blocks = asBlocks(entry.message?.content);
       const toolResults = blocks.filter((b) => b.type === "tool_result");
@@ -735,6 +767,7 @@ function buildAgentTreeFromEntries(
               contextDelta: null,
             },
             preview: previewText(stringifyContent(block.content), 200),
+            log,
             toolUseId: block.tool_use_id,
             children: [],
           };
@@ -762,6 +795,7 @@ function buildAgentTreeFromEntries(
             contextDelta: null,
           },
           preview: previewText(prompt, 200),
+          log,
           children: [],
         });
       }
@@ -804,6 +838,7 @@ function buildAgentTreeFromEntries(
               }
             : null,
         preview: previewText(text || thinking, 200),
+        log,
         children: [],
       };
       assistantIndex += 1;
@@ -818,6 +853,7 @@ function buildAgentTreeFromEntries(
           usage: null,
           context: null,
           preview: previewText(thinking, 200),
+          log,
           children: [],
         });
       }
@@ -846,6 +882,8 @@ function buildAgentTreeFromEntries(
             contextDelta: null,
           },
           preview: inputPreview,
+          // Tool calls live inside the assistant JSONL row.
+          log,
           toolName: tool.name,
           toolUseId: tool.id,
           agentId: isSubagent
@@ -874,6 +912,7 @@ function buildAgentTreeFromEntries(
         usage: null,
         context: null,
         preview: previewText(stringifyContent(entry.message?.content ?? entry), 160),
+        log,
         children: [],
       });
     }
@@ -906,6 +945,7 @@ function buildAgentTreeFromEntries(
           contextDelta: null,
         },
         preview: toolResultPreview(content),
+        log,
         toolUseId,
         children: [],
       };
@@ -987,8 +1027,8 @@ export function buildSessionDetail(
     const subModel =
       [...sub.entries]
         .reverse()
-        .find((e) => e.type === "assistant" && e.message?.model)?.message
-        ?.model ?? null;
+        .find((s) => s.entry.type === "assistant" && s.entry.message?.model)
+        ?.entry.message?.model ?? null;
     const built = buildAgentTreeFromEntries(sub.entries, {
       id: sub.agentId,
       label: `Subagent · ${sub.agentId}`,

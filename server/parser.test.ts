@@ -107,6 +107,17 @@ describe("fixture session parse", () => {
       detail.meta.filePath.includes("11111111-1111-1111-1111-111111111111.jsonl"),
       "session detail should expose the full transcript log path",
     );
+    assert.ok(detail.timeline.every((p) => p.log?.raw && p.log.line > 0));
+    assert.ok(
+      detail.timeline[0].log.raw.includes('"type":"assistant"') ||
+        detail.timeline[0].log.raw.includes('"type": "assistant"'),
+    );
+    assert.equal(detail.timeline[0].log.filePath, detail.meta.filePath);
+    const firstAssistant = detail.tree.children.find(
+      (n) => n.kind === "assistant_message",
+    );
+    assert.ok(firstAssistant?.log?.raw);
+    assert.equal(firstAssistant?.log?.line, detail.timeline[0].log.line);
 
     const assistants = detail.tree.children.filter(
       (n) => n.kind === "assistant_message" && n.usage,

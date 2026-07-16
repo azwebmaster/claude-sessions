@@ -5,6 +5,15 @@ export interface TokenUsage {
   cacheReadInputTokens: number;
 }
 
+/** One raw JSONL transcript line, for click-through inspection */
+export interface LogLineRef {
+  filePath: string;
+  /** 1-based line number in the JSONL file */
+  line: number;
+  /** Exact JSONL line text */
+  raw: string;
+}
+
 export interface SessionListItem {
   id: string;
   projectPath: string;
@@ -53,6 +62,8 @@ export interface TreeNode {
   context: ContextDelta | null;
   /** Truncated preview text */
   preview: string | null;
+  /** Source JSONL line when this node maps to a transcript entry */
+  log: LogLineRef | null;
   /** Tool-specific metadata */
   toolName?: string;
   toolUseId?: string;
@@ -80,6 +91,8 @@ export interface ContextTimelinePoint {
   cacheCreationTokens: number;
   outputTokens: number;
   toolName: string | null;
+  /** Source JSONL line for this assistant turn */
+  log: LogLineRef;
 }
 
 /** One tool invocation contributing to context growth */

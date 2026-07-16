@@ -11,6 +11,7 @@ interface Props {
   focusedNodeId?: string | null;
   /** Node ids that must stay expanded to reveal the focused node */
   forceOpenIds?: ReadonlySet<string>;
+  onFocusNode?: (nodeId: string) => void;
 }
 
 const kindColors: Record<TreeNodeKind, { bg: string; color: string }> = {
@@ -62,6 +63,7 @@ export function HierarchyTree({
   defaultOpen,
   focusedNodeId = null,
   forceOpenIds,
+  onFocusNode,
 }: Props) {
   const hasChildren = node.children.length > 0;
   const isFocused = focusedNodeId === node.id;
@@ -137,7 +139,10 @@ export function HierarchyTree({
       <Box
         component="button"
         type="button"
-        onClick={() => hasChildren && setOpen((v) => !v)}
+        onClick={() => {
+          onFocusNode?.(node.id);
+          if (hasChildren) setOpen((v) => !v);
+        }}
         aria-expanded={hasChildren ? open : undefined}
         aria-current={isFocused ? "true" : undefined}
         sx={{
@@ -151,7 +156,7 @@ export function HierarchyTree({
           textAlign: "left",
           px: 1.25,
           py: 1,
-          cursor: hasChildren ? "pointer" : "default",
+          cursor: "pointer",
           color: "inherit",
           font: "inherit",
         }}
@@ -245,6 +250,7 @@ export function HierarchyTree({
               depth={depth + 1}
               focusedNodeId={focusedNodeId}
               forceOpenIds={forceOpenIds}
+              onFocusNode={onFocusNode}
             />
           ))}
         </Box>

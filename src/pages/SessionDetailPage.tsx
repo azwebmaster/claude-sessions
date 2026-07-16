@@ -14,12 +14,13 @@ import {
   contextSize,
 } from "@shared/types";
 import { api, formatDate } from "../lib/api";
-import { findAncestorIds } from "../lib/tree";
+import { findAncestorIds, findNode } from "../lib/tree";
 import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
 import { TurnDetailPanel } from "../components/TurnDetailPanel";
+import { LogLinePanel } from "../components/LogLinePanel";
 
 const mono = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -99,6 +100,9 @@ export function SessionDetailPage() {
     detail && focusedTurnIndex > 0
       ? detail.timeline[focusedTurnIndex - 1]
       : null;
+  const focusedNode =
+    detail && focusedNodeId ? findNode(detail.tree, focusedNodeId) : null;
+  const focusedLog = focusedTurn?.log ?? focusedNode?.log ?? null;
 
   const forceOpenIds = useMemo(() => {
     if (!detail || !focusedNodeId) return undefined;
@@ -254,7 +258,10 @@ export function SessionDetailPage() {
           selectedNodeId={focusedNodeId}
           onSelect={(point) => setFocusedNodeId(point.nodeId)}
         />
-        <TurnDetailPanel point={focusedTurn} previous={previousTurn} />
+        {focusedTurn ? (
+          <TurnDetailPanel point={focusedTurn} previous={previousTurn} />
+        ) : null}
+        <LogLinePanel log={focusedLog} />
       </Paper>
 
       <Box
@@ -270,10 +277,11 @@ export function SessionDetailPage() {
             Agent & tool hierarchy
           </Typography>
           <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-            Root agent → tool calls → results / subagents. Assistant chips show
-            that turn&apos;s API usage and window occupancy (ctx) — usually
-            mostly cache/input from the prompt, not a sum of child tools. Tool
-            +N est chips are estimated I/O sizes only.
+            Root agent → tool calls → results / subagents. Click a node to
+            inspect its JSONL source line. Assistant chips show that turn&apos;s
+            API usage and window occupancy (ctx) — usually mostly cache/input
+            from the prompt, not a sum of child tools. Tool +N est chips are
+            estimated I/O sizes only.
             {focusedNodeId
               ? " Highlighted node matches the selected timeline turn."
               : ""}
@@ -293,6 +301,7 @@ export function SessionDetailPage() {
               defaultOpen
               focusedNodeId={focusedNodeId}
               forceOpenIds={forceOpenIds}
+              onFocusNode={setFocusedNodeId}
             />
           </Box>
         </Paper>
