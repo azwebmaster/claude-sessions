@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import AddIcon from "@mui/icons-material/Add";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import RemoveIcon from "@mui/icons-material/Remove";
 import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
@@ -155,14 +156,124 @@ function radiusFromWeight(weight: number, minR: number, maxR: number): number {
   return minR + Math.sqrt(w) * (maxR - minR);
 }
 
+function clampPoint(node: LaidOutNode, point: Point, world: WorldMetrics): Point {
+  return {
+    x: clamp(point.x, node.radius + 16, world.width - node.radius - 16),
+    y: clamp(point.y, node.radius + 16, world.height - node.radius - 16),
+  };
+}
+
+function pointOnRing(
+  cx: number,
+  cy: number,
+  radius: number,
+  angle: number,
+): Point {
+  return {
+    x: cx + Math.cos(angle) * radius,
+    y: cy + Math.sin(angle) * radius,
+  };
+}
+
 /**
- * Default layout: root agent at the world center, subagents on an inner ring,
- * tools on one or more expanded outer rings (extra rings when the set is large).
+ * Evenly space angles on a circle while keeping each node near its preferred
+ * angle (used so tools stay close to the agents that call them).
  */
-function initialRadialPositions(
+function spaceNearPreferred(preferred: number[]): number[] {
+  const n = preferred.length;
+  if (n === 0) return [];
+  if (n === 1) return [preferred[0]!];
+
+  const indexed = preferred
+    .map((angle, index) => ({ angle, index }))
+    .sort((a, b) => a.angle - b.angle);
+  const minGap = (Math.PI * 2) / n;
+  const spaced = indexed.map((item) => item.angle);
+
+  // Two passes each direction keeps clusters from stacking on the same ray.
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 1; i < n; i++) {
+      const prev = spaced[i - 1]!;
+      const cur = spaced[i]!;
+      if (cur - prev < minGap) spaced[i] = prev + minGap;
+    }
+    const overflow = spaced[n - 1]! - spaced[0]! - (Math.PI * 2 - minGap);
+    if (overflow > 0) {
+      for (let i = 0; i < n; i++) spaced[i]! -= (overflow * i) / (n - 1);
+    }
+    for (let i = n - 2; i >= 0; i--) {
+      const next = spaced[i + 1]!;
+      const cur = spaced[i]!;
+      if (next - cur < minGap) spaced[i] = next - minGap;
+    }
+  }
+
+  const result = new Array<number>(n);
+  indexed.forEach((item, i) => {
+    result[item.index] = spaced[i]!;
+  });
+  return result;
+}
+
+/** Push overlapping circles apart so auto-arrange stays readable. */
+function separateOverlaps(
+  nodes: LaidOutNode[],
+  positions: Record<string, Point>,
+  world: WorldMetrics,
+  iterations = 18,
+) {
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i]!;
+      const pa = positions[a.id];
+      if (!pa) continue;
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j]!;
+        const pb = positions[b.id];
+        if (!pb) continue;
+        const dx = pb.x - pa.x;
+        const dy = pb.y - pa.y;
+        const dist = Math.hypot(dx, dy) || 0.01;
+        const minDist = a.radius + b.radius + 12;
+        if (dist >= minDist) continue;
+        const push = ((minDist - dist) / 2) * 0.85;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        // Keep the centered root agent pinned when possible.
+        const aPinned = a.agentKind === "root_agent";
+        const bPinned = b.agentKind === "root_agent";
+        if (!aPinned) {
+          positions[a.id] = clampPoint(
+            a,
+            { x: pa.x - ux * (bPinned ? push * 2 : push), y: pa.y - uy * (bPinned ? push * 2 : push) },
+            world,
+          );
+        }
+        if (!bPinned) {
+          positions[b.id] = clampPoint(
+            b,
+            { x: pb.x + ux * (aPinned ? push * 2 : push), y: pb.y + uy * (aPinned ? push * 2 : push) },
+            world,
+          );
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+/**
+ * Auto-arrange layout: root agent at the world center, subagents on an inner
+ * ring, tools on outer rings near the agents that call them. Extra rings are
+ * used when the tool set is large.
+ */
+function arrangeRadialPositions(
   agents: LaidOutNode[],
   tools: LaidOutNode[],
   world: WorldMetrics,
+  links: DiagramLink[] = [],
 ): Record<string, Point> {
   const positions: Record<string, Point> = {};
   const cx = world.width / 2;
@@ -177,46 +288,59 @@ function initialRadialPositions(
     positions[centerAgent.id] = { x: cx, y: cy };
   }
 
-  const placeOnRing = (
-    nodes: LaidOutNode[],
-    ringRadius: number,
-    angleOffset: number,
-  ) => {
-    const n = nodes.length;
-    if (n === 0) return;
-    nodes.forEach((node, i) => {
-      const baseAngle =
-        n === 1
-          ? angleOffset
-          : angleOffset + (i / n) * Math.PI * 2 - Math.PI / 2;
-      const jitter =
-        (hash01(`${node.id}:ang`) - 0.5) * (n > 1 ? (Math.PI * 2) / n : 0) * 0.35;
-      const rJitter = (hash01(`${node.id}:r`) - 0.5) * ringRadius * 0.1;
-      const angle = baseAngle + jitter;
-      const r = ringRadius + rJitter;
-      positions[node.id] = {
-        x: clamp(cx + Math.cos(angle) * r, node.radius + 16, world.width - node.radius - 16),
-        y: clamp(cy + Math.sin(angle) * r, node.radius + 16, world.height - node.radius - 16),
-      };
-    });
-  };
+  const agentAngle = new Map<string, number>();
+  if (centerAgent) agentAngle.set(centerAgent.id, -Math.PI / 2);
 
-  placeOnRing(ringAgents, world.subagentRing, 0);
+  ringAgents.forEach((node, i) => {
+    const n = ringAgents.length;
+    const angle =
+      n === 1 ? -Math.PI / 2 : -Math.PI / 2 + (i / n) * Math.PI * 2;
+    agentAngle.set(node.id, angle);
+    positions[node.id] = clampPoint(
+      node,
+      pointOnRing(cx, cy, world.subagentRing, angle),
+      world,
+    );
+  });
 
-  // Distribute tools across concentric outer rings so expanded views stay readable.
+  // Primary caller per tool (highest call volume) drives preferred angle.
+  const primaryAgentByTool = new Map<string, string>();
+  const primaryCallsByTool = new Map<string, number>();
+  for (const link of links) {
+    const prev = primaryCallsByTool.get(link.toolName) ?? -1;
+    if (link.callCount > prev) {
+      primaryCallsByTool.set(link.toolName, link.callCount);
+      primaryAgentByTool.set(link.toolName, link.agentId);
+    }
+  }
+
   const ringCount = Math.max(1, world.toolRings.length);
   const perRing = Math.ceil(tools.length / ringCount) || 1;
   world.toolRings.forEach((ringRadius, ringIndex) => {
     const slice = tools.slice(ringIndex * perRing, (ringIndex + 1) * perRing);
-    placeOnRing(
-      slice,
-      ringRadius,
-      slice.length > 0
-        ? Math.PI / slice.length + ringIndex * (Math.PI / Math.max(slice.length, 2))
-        : 0,
-    );
+    if (slice.length === 0) return;
+
+    const preferred = slice.map((tool, i) => {
+      const agentId = primaryAgentByTool.get(tool.id);
+      const fromAgent = agentId != null ? agentAngle.get(agentId) : undefined;
+      if (fromAgent != null) {
+        // Stagger multi-ring tools slightly so stacked rings don't align.
+        return fromAgent + ringIndex * 0.12 + (hash01(`${tool.id}:bias`) - 0.5) * 0.08;
+      }
+      return -Math.PI / 2 + ((i + 0.5) / slice.length) * Math.PI * 2 + ringIndex * 0.2;
+    });
+
+    const angles = spaceNearPreferred(preferred);
+    slice.forEach((tool, i) => {
+      positions[tool.id] = clampPoint(
+        tool,
+        pointOnRing(cx, cy, ringRadius, angles[i] ?? preferred[i]!),
+        world,
+      );
+    });
   });
 
+  separateOverlaps([...agents, ...tools], positions, world);
   return positions;
 }
 
@@ -396,7 +520,7 @@ export function AgentToolDiagram({
   }, [rows, toolContextByName, showAllTools, agentSizeMetric]);
 
   const [positions, setPositions] = useState<Record<string, Point>>(() =>
-    initialRadialPositions(agentNodes, toolNodes, world),
+    arrangeRadialPositions(agentNodes, toolNodes, world, links),
   );
   const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const layoutKeyRef = useRef(layoutKey);
@@ -407,8 +531,8 @@ export function AgentToolDiagram({
   useEffect(() => {
     if (layoutKeyRef.current === layoutKey) return;
     layoutKeyRef.current = layoutKey;
-    setPositions(initialRadialPositions(agentNodes, toolNodes, world));
-  }, [layoutKey, agentNodes, toolNodes, world]);
+    setPositions(arrangeRadialPositions(agentNodes, toolNodes, world, links));
+  }, [layoutKey, agentNodes, toolNodes, world, links]);
 
   // Fit the world into the viewport when the graph membership changes.
   useEffect(() => {
@@ -465,14 +589,21 @@ export function AgentToolDiagram({
     return map;
   }, [allNodes]);
 
-  const resetLayout = useCallback(() => {
-    setPositions(initialRadialPositions(agentNodes, toolNodes, world));
+  const fitToView = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setView(fitView(rect.width, rect.height, world));
+  }, [world]);
+
+  const autoArrange = useCallback(() => {
+    setPositions(arrangeRadialPositions(agentNodes, toolNodes, world, links));
     const el = viewportRef.current;
     if (el) {
       const rect = el.getBoundingClientRect();
       setView(fitView(rect.width, rect.height, world));
     }
-  }, [agentNodes, toolNodes, world]);
+  }, [agentNodes, toolNodes, world, links]);
 
   const zoomBy = useCallback((factor: number) => {
     const el = viewportRef.current;
@@ -836,6 +967,24 @@ export function AgentToolDiagram({
               </Button>
             </Tooltip>
           ) : null}
+          <Tooltip title="Auto arrange nodes into a clean radial layout">
+            <Button
+              size="small"
+              color="inherit"
+              aria-label="Auto arrange diagram nodes"
+              onClick={autoArrange}
+              startIcon={<AutoFixHighIcon fontSize="small" />}
+              sx={{
+                textTransform: "none",
+                fontSize: "0.72rem",
+                px: 1,
+                minWidth: 0,
+                color: "text.secondary",
+              }}
+            >
+              Arrange
+            </Button>
+          </Tooltip>
           <Tooltip title="Zoom in">
             <IconButton
               size="small"
@@ -854,11 +1003,11 @@ export function AgentToolDiagram({
               <RemoveIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Reset layout & zoom">
+          <Tooltip title="Fit diagram to view">
             <IconButton
               size="small"
-              aria-label="Reset layout and zoom"
-              onClick={resetLayout}
+              aria-label="Fit diagram to view"
+              onClick={fitToView}
             >
               <CenterFocusStrongIcon fontSize="small" />
             </IconButton>
@@ -884,7 +1033,7 @@ export function AgentToolDiagram({
           <Box
             component="svg"
             role="img"
-            aria-label={`Radial diagram of agents and tools. Agent circle size reflects ${agentSizeCaption}; tool circles reflect attributed context growth. Root agent is centered; drag nodes to rearrange; scroll or use buttons to zoom.`}
+            aria-label={`Radial diagram of agents and tools. Agent circle size reflects ${agentSizeCaption}; tool circles reflect attributed context growth. Root agent is centered; drag nodes to rearrange; use Arrange to auto-layout; scroll or use buttons to zoom.`}
             width="100%"
             height="100%"
             sx={{ display: "block", fontFamily: theme.typography.fontFamily }}
@@ -1046,8 +1195,8 @@ export function AgentToolDiagram({
                 : ""}
           {" · "}agent size = {agentSizeCaption}
           {" · "}tool size = attributed growth
-          {" · "}root centered · drag to rearrange · scroll or +/− to zoom · click
-          to focus
+          {" · "}root centered · drag to rearrange · Arrange to auto-layout ·
+          scroll or +/− to zoom · click to focus
         </Typography>
         {canExpandTools && !showAllTools ? (
           <Button
