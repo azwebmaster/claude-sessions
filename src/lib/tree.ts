@@ -1,5 +1,35 @@
 import type { TreeNode } from "@shared/types";
 
+/** Ids of nodes that have children (can expand/collapse), depth-first. */
+export function collectExpandableIds(root: TreeNode): string[] {
+  const ids: string[] = [];
+  function walk(node: TreeNode): void {
+    if (node.children.length === 0) return;
+    ids.push(node.id);
+    for (const child of node.children) walk(child);
+  }
+  walk(root);
+  return ids;
+}
+
+/**
+ * Expandable node ids at depth strictly less than `maxDepth`.
+ * Depth 0 is the root. E.g. maxDepth 1 yields only the root when it has children.
+ */
+export function collectExpandableIdsBelowDepth(
+  root: TreeNode,
+  maxDepth: number,
+): string[] {
+  const ids: string[] = [];
+  function walk(node: TreeNode, depth: number): void {
+    if (node.children.length === 0) return;
+    if (depth < maxDepth) ids.push(node.id);
+    for (const child of node.children) walk(child, depth + 1);
+  }
+  walk(root, 0);
+  return ids;
+}
+
 /** Ancestor ids from root down to (but not including) the target node. */
 export function findAncestorIds(
   root: TreeNode,

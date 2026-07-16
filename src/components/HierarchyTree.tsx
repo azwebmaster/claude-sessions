@@ -1,18 +1,34 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
-import { Box, Button, Chip, Collapse, Typography } from "@mui/material";
+import { Box, Button, Chip, Collapse, Stack, Typography } from "@mui/material";
+import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 import type { TokenUsage, TreeNode } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { kindLabel } from "../lib/api";
+import {
+  collectExpandableIds,
+  collectExpandableIdsBelowDepth,
+} from "../lib/tree";
 import { focusHighlight, nodeKindStyle } from "../theme";
 import { ExpandableRow } from "./ui";
 
+/** Open only the root by default (collapse everything below level 1). */
+const DEFAULT_OPEN_MAX_DEPTH = 1;
+
 interface Props {
   node: TreeNode;
-  depth?: number;
-  defaultOpen?: boolean;
   focusedNodeId?: string | null;
   forceOpenIds?: ReadonlySet<string>;
+  onFocusNode?: (nodeId: string) => void;
+  onViewLog?: (node: TreeNode) => void;
+}
+
+interface NodeProps {
+  node: TreeNode;
+  openIds: ReadonlySet<string>;
+  onToggleOpen: (nodeId: string) => void;
+  focusedNodeId: string | null;
   onFocusNode?: (nodeId: string) => void;
   onViewLog?: (node: TreeNode) => void;
 }
@@ -48,30 +64,18 @@ function metricsTitle(node: TreeNode): string | undefined {
   return undefined;
 }
 
-export function HierarchyTree({
+function HierarchyTreeNode({
   node,
-  depth = 0,
-  defaultOpen,
-  focusedNodeId = null,
-  forceOpenIds,
+  openIds,
+  onToggleOpen,
+  focusedNodeId,
   onFocusNode,
   onViewLog,
-}: Props) {
+}: NodeProps) {
   const theme = useTheme();
   const hasChildren = node.children.length > 0;
   const isFocused = focusedNodeId === node.id;
-  const mustOpen = Boolean(forceOpenIds?.has(node.id));
-  const [open, setOpen] = useState(
-    defaultOpen ??
-      (mustOpen ||
-        depth < 2 ||
-        node.kind === "subagent" ||
-        node.kind === "tool_call"),
-  );
-
-  useEffect(() => {
-    if (mustOpen && hasChildren) setOpen(true);
-  }, [mustOpen, hasChildren, focusedNodeId]);
+  const open = hasChildren && openIds.has(node.id);
 
   const hasUsage = Boolean(node.usage && totalTokens(node.usage) > 0);
   const usageLabel = hasUsage
@@ -136,7 +140,7 @@ export function HierarchyTree({
         onToggleExpand={
           hasChildren
             ? () => {
-                setOpen((v) => !v);
+                onToggleOpen(node.id);
               }
             : undefined
         }
@@ -257,18 +261,124 @@ export function HierarchyTree({
           }}
         >
           {node.children.map((child) => (
-            <HierarchyTree
+            <HierarchyTreeNode
               key={child.id}
               node={child}
-              depth={depth + 1}
+              openIds={openIds}
+              onToggleOpen={onToggleOpen}
               focusedNodeId={focusedNodeId}
-              forceOpenIds={forceOpenIds}
               onFocusNode={onFocusNode}
               onViewLog={onViewLog}
             />
           ))}
         </Box>
       </Collapse>
+    </Box>
+  );
+}
+
+export function HierarchyTree({
+  node,
+  focusedNodeId = null,
+  forceOpenIds,
+  onFocusNode,
+  onViewLog,
+}: Props) {
+  const allExpandableIds = useMemo(() => collectExpandableIds(node), [node]);
+  const defaultOpenIds = useMemo(
+    () => collectExpandableIdsBelowDepth(node, DEFAULT_OPEN_MAX_DEPTH),
+    [node],
+  );
+  const [openIds, setOpenIds] = useState(() => new Set(defaultOpenIds));
+
+  useEffect(() => {
+    setOpenIds(new Set(defaultOpenIds));
+  }, [defaultOpenIds]);
+
+  useEffect(() => {
+    if (!forceOpenIds || forceOpenIds.size === 0) return;
+    setOpenIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of forceOpenIds) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [forceOpenIds, focusedNodeId]);
+
+  const expandAll = () => {
+    setOpenIds(new Set(allExpandableIds));
+  };
+
+  const collapseAll = () => {
+    setOpenIds(new Set());
+  };
+
+  const toggleOpen = (nodeId: string) => {
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, minWidth: 0 }}>
+      <Stack
+        direction="row"
+        spacing={0.5}
+        sx={{
+          justifyContent: "flex-end",
+          flexWrap: "wrap",
+          rowGap: 0.5,
+        }}
+      >
+        <Button
+          size="small"
+          color="inherit"
+          aria-label="Expand all hierarchy nodes"
+          onClick={expandAll}
+          startIcon={<UnfoldMoreIcon fontSize="small" />}
+          sx={{
+            textTransform: "none",
+            fontSize: "0.72rem",
+            px: 1,
+            minWidth: 0,
+            color: "text.secondary",
+          }}
+        >
+          Expand all
+        </Button>
+        <Button
+          size="small"
+          color="inherit"
+          aria-label="Collapse all hierarchy nodes"
+          onClick={collapseAll}
+          startIcon={<UnfoldLessIcon fontSize="small" />}
+          sx={{
+            textTransform: "none",
+            fontSize: "0.72rem",
+            px: 1,
+            minWidth: 0,
+            color: "text.secondary",
+          }}
+        >
+          Collapse all
+        </Button>
+      </Stack>
+      <HierarchyTreeNode
+        node={node}
+        openIds={openIds}
+        onToggleOpen={toggleOpen}
+        focusedNodeId={focusedNodeId}
+        onFocusNode={onFocusNode}
+        onViewLog={onViewLog}
+      />
     </Box>
   );
 }
