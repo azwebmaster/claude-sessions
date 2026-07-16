@@ -2,7 +2,10 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type {
   AgentBreakdownRow,
+  ContextCategorySummary,
   ContextTimelinePoint,
+  LoadedContextItem,
+  LoadedContextKind,
   LogLineRef,
   SessionDetail,
   SessionListItem,
@@ -10,6 +13,7 @@ import type {
   ToolImpactCall,
   ToolImpactRow,
   TreeNode,
+  TurnLoadedContext,
 } from "../shared/types.js";
 import {
   addUsage,
@@ -43,6 +47,7 @@ interface ContentBlock {
 
 interface RawEntry {
   type?: string;
+  subtype?: string;
   uuid?: string;
   parentUuid?: string | null;
   timestamp?: string;
@@ -59,6 +64,12 @@ interface RawEntry {
     model?: string;
     content?: string | ContentBlock[];
     usage?: RawUsage;
+  };
+  /** Claude Code context-injection events (skills, MCP, deferred tools, …) */
+  attachment?: {
+    type?: string;
+    subtype?: string;
+    [key: string]: unknown;
   };
   toolUseResult?: unknown;
   [key: string]: unknown;
@@ -671,6 +682,824 @@ function buildToolImpact(
     );
 }
 
+const CATEGORY_LABELS: Record<LoadedContextKind, string> = {
+  system_prompt: "System prompt",
+  instruction: "Instructions",
+  memory: "Memory",
+  mcp: "MCPs",
+  skill: "Skills",
+  deferred_tools: "Deferred tools",
+  tool_schema: "Tool schemas",
+  user_message: "User messages",
+  assistant_message: "Assistant replies",
+  file: "Files",
+  tool_result: "Tool results",
+  attachment: "Attachments",
+  other: "Other",
+};
+
+const CATEGORY_ORDER: LoadedContextKind[] = [
+  "system_prompt",
+  "instruction",
+  "memory",
+  "mcp",
+  "skill",
+  "deferred_tools",
+  "tool_schema",
+  "user_message",
+  "assistant_message",
+  "file",
+  "tool_result",
+  "attachment",
+  "other",
+];
+
+function attachmentType(entry: RawEntry): string | null {
+  const fromAttachment =
+    (typeof entry.attachment?.type === "string" && entry.attachment.type) ||
+    (typeof entry.attachment?.subtype === "string" && entry.attachment.subtype);
+  if (fromAttachment) return fromAttachment;
+  if (typeof entry.subtype === "string" && entry.subtype) return entry.subtype;
+  if (typeof entry.type === "string" && entry.type !== "attachment") {
+    return entry.type;
+  }
+  return null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const record = item as Record<string, unknown>;
+        for (const key of ["name", "path", "id", "server", "title"]) {
+          if (typeof record[key] === "string" && record[key]) {
+            return String(record[key]);
+          }
+        }
+      }
+      return null;
+    })
+    .filter((v): v is string => Boolean(v));
+}
+
+function mcpServerFromToolName(toolName: string): string | null {
+  if (!toolName.startsWith("mcp__")) return null;
+  const parts = toolName.split("__");
+  return parts.length >= 2 ? parts[1] : null;
+}
+
+function looksLikeInstructionPath(filePath: string): boolean {
+  const base = path.basename(filePath).toLowerCase();
+  if (
+    base === "claude.md" ||
+    base === "agents.md" ||
+    base === "memory.md" ||
+    base.endsWith(".mdc")
+  ) {
+    return true;
+  }
+  return (
+    filePath.includes("/.claude/rules/") ||
+    filePath.includes("/.cursor/rules/") ||
+    filePath.includes("/.claude/skills/") ||
+    /\/skills?\/.+\/skill\.md$/i.test(filePath)
+  );
+}
+
+function instructionKindForPath(filePath: string): LoadedContextKind {
+  const base = path.basename(filePath).toLowerCase();
+  if (base === "memory.md" || filePath.includes("/memory/")) return "memory";
+  if (
+    filePath.includes("/.claude/skills/") ||
+    /\/skills?\/.+\/skill\.md$/i.test(filePath)
+  ) {
+    return "skill";
+  }
+  return "instruction";
+}
+
+function extractSystemReminderBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  const re =
+    /<system-reminder>([\s\S]*?)<\/system-reminder>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) != null) {
+    blocks.push(match[1].trim());
+  }
+  return blocks;
+}
+
+function upsertItem(
+  map: Map<string, LoadedContextItem>,
+  item: LoadedContextItem,
+): void {
+  const existing = map.get(item.id);
+  if (!existing) {
+    map.set(item.id, item);
+    return;
+  }
+  map.set(item.id, {
+    ...existing,
+    ...item,
+    detail: item.detail ?? existing.detail,
+    sourcePath: item.sourcePath ?? existing.sourcePath,
+    estimatedTokens:
+      item.estimatedTokens != null
+        ? Math.max(existing.estimatedTokens ?? 0, item.estimatedTokens)
+        : existing.estimatedTokens,
+    evidence: item.evidence ?? existing.evidence,
+    count: item.count ?? existing.count,
+    mcpServer: item.mcpServer ?? existing.mcpServer,
+    toolName: item.toolName ?? existing.toolName,
+    skillName: item.skillName ?? existing.skillName,
+  });
+}
+
+function summarizeCategories(
+  items: LoadedContextItem[],
+): ContextCategorySummary[] {
+  const byKind = new Map<LoadedContextKind, LoadedContextItem[]>();
+  for (const item of items) {
+    const list = byKind.get(item.kind) ?? [];
+    list.push(item);
+    byKind.set(item.kind, list);
+  }
+  return CATEGORY_ORDER.filter((kind) => byKind.has(kind)).map((kind) => {
+    const list = byKind.get(kind) ?? [];
+    const tokenSum = list.reduce(
+      (sum, item) => sum + (item.estimatedTokens ?? 0),
+      0,
+    );
+    const anyTokens = list.some((item) => item.estimatedTokens != null);
+    return {
+      kind,
+      label: CATEGORY_LABELS[kind],
+      itemCount: list.length,
+      estimatedTokens: anyTokens ? tokenSum : null,
+    };
+  });
+}
+
+function snapshotInventory(
+  inventory: Map<string, LoadedContextItem>,
+  point: ContextTimelinePoint,
+): TurnLoadedContext {
+  const items = [...inventory.values()].sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a.kind);
+    const bi = CATEGORY_ORDER.indexOf(b.kind);
+    if (ai !== bi) return ai - bi;
+    return (b.estimatedTokens ?? 0) - (a.estimatedTokens ?? 0);
+  });
+  const categories = summarizeCategories(items);
+  const attributed = categories.reduce(
+    (sum, c) => sum + (c.estimatedTokens ?? 0),
+    0,
+  );
+  const inferred = items.some(
+    (item) =>
+      item.provenance === "inferred" || item.provenance === "baseline",
+  );
+  const notes: string[] = [];
+  if (inferred) {
+    notes.push(
+      "Some layers are reconstructed from transcript attachments, tool I/O, and usage — Claude Code does not always log full prompt bodies.",
+    );
+  }
+  if (point.contextTokens > 0 && attributed > 0) {
+    const coverage = Math.min(100, Math.round((attributed / point.contextTokens) * 100));
+    notes.push(
+      `Item estimates cover ~${coverage}% of measured ctx (${point.contextTokens.toLocaleString()} tokens); remainder is unparsed prompt/cache material.`,
+    );
+  } else if (point.contextTokens > 0 && attributed === 0) {
+    notes.push(
+      "No attachment inventory was found; showing conversation/tool accretion inferred from the transcript.",
+    );
+  }
+  return {
+    nodeId: point.nodeId,
+    turn: point.turn,
+    contextTokens: point.contextTokens,
+    categories,
+    items,
+    inferred,
+    notes,
+  };
+}
+
+/**
+ * Reconstruct, turn-by-turn, what appears to be loaded into Claude's context:
+ * system/instruction baseline, MCP + skill attachments, deferred tools,
+ * files read, and conversation/tool-result accretion.
+ */
+function buildLoadedContext(
+  sourcedEntries: SourcedEntry[],
+  timeline: ContextTimelinePoint[],
+): TurnLoadedContext[] {
+  if (timeline.length === 0) return [];
+
+  const inventory = new Map<string, LoadedContextItem>();
+  const snapshots = new Map<string, TurnLoadedContext>();
+  let assistantIndex = 0;
+  let sawBaseline = false;
+  let userMessageCount = 0;
+  let assistantMessageCount = 0;
+
+  const pendingToolCalls = new Map<
+    string,
+    { name: string; input: Record<string, unknown> | null; log: LogLineRef }
+  >();
+
+  for (const sourced of sourcedEntries) {
+    const entry = sourced.entry;
+    const log = toLogRef(sourced);
+
+    if (entry.type === "attachment" || entry.attachment) {
+      const kindKey = (attachmentType(entry) ?? "attachment").toLowerCase();
+      const payload = entry.attachment ?? entry;
+      const payloadRecord = payload as Record<string, unknown>;
+
+      if (
+        kindKey.includes("deferred_tool") ||
+        kindKey === "deferred_tools_delta"
+      ) {
+        const tools = asStringArray(
+          payloadRecord.tools ??
+            payloadRecord.addedTools ??
+            payloadRecord.names ??
+            payloadRecord.toolNames,
+        );
+        const mcpTools = tools.filter((t) => t.startsWith("mcp__"));
+        const servers = [
+          ...new Set(
+            mcpTools
+              .map((t) => mcpServerFromToolName(t))
+              .filter((s): s is string => Boolean(s)),
+          ),
+        ];
+        upsertItem(inventory, {
+          id: "deferred-tools",
+          kind: "deferred_tools",
+          label:
+            tools.length > 0
+              ? `${tools.length} deferred tool names`
+              : "Deferred tools",
+          detail:
+            tools.length > 0
+              ? previewText(tools.slice(0, 12).join(", "), 180)
+              : "Tool names registered without full schemas",
+          sourcePath: null,
+          estimatedTokens:
+            tools.length > 0 ? Math.max(1, tools.length * 3) : null,
+          provenance: "observed",
+          evidence: log,
+          count: tools.length || null,
+        });
+        if (servers.length > 0) {
+          for (const server of servers) {
+            const serverTools = mcpTools.filter(
+              (t) => mcpServerFromToolName(t) === server,
+            );
+            upsertItem(inventory, {
+              id: `mcp-server:${server}`,
+              kind: "mcp",
+              label: `MCP · ${server}`,
+              detail: `${serverTools.length} tool name${serverTools.length === 1 ? "" : "s"} registered (schemas deferred)`,
+              sourcePath: null,
+              estimatedTokens: Math.max(1, serverTools.length * 3),
+              provenance: "observed",
+              evidence: log,
+              mcpServer: server,
+              count: serverTools.length,
+            });
+          }
+        }
+      } else if (
+        kindKey.includes("mcp_instruction") ||
+        kindKey.includes("mcp-instruction") ||
+        kindKey === "mcp_instructions_delta"
+      ) {
+        const servers = asStringArray(
+          payloadRecord.servers ??
+            payloadRecord.mcpServers ??
+            payloadRecord.names,
+        );
+        const instructions =
+          typeof payloadRecord.instructions === "string"
+            ? payloadRecord.instructions
+            : typeof payloadRecord.content === "string"
+              ? payloadRecord.content
+              : stringifyContent(
+                  payloadRecord.instructions ?? payloadRecord.content ?? "",
+                );
+        if (servers.length > 0) {
+          for (const server of servers) {
+            upsertItem(inventory, {
+              id: `mcp-instructions:${server}`,
+              kind: "mcp",
+              label: `MCP instructions · ${server}`,
+              detail: previewText(instructions, 180),
+              sourcePath: null,
+              estimatedTokens: instructions
+                ? Math.max(
+                    1,
+                    Math.round(
+                      estimateTokensFromText(instructions) /
+                        Math.max(1, servers.length),
+                    ),
+                  )
+                : null,
+              provenance: "observed",
+              evidence: log,
+              mcpServer: server,
+            });
+          }
+        } else {
+          upsertItem(inventory, {
+            id: `mcp-instructions:${sourced.line}`,
+            kind: "mcp",
+            label: "MCP instructions",
+            detail: previewText(instructions, 180),
+            sourcePath: null,
+            estimatedTokens: instructions
+              ? estimateTokensFromText(instructions)
+              : null,
+            provenance: "observed",
+            evidence: log,
+          });
+        }
+      } else if (
+        kindKey.includes("skill_listing") ||
+        kindKey.includes("skill-listing") ||
+        kindKey === "available_skills"
+      ) {
+        const skills = asStringArray(
+          payloadRecord.skills ??
+            payloadRecord.names ??
+            payloadRecord.availableSkills,
+        );
+        upsertItem(inventory, {
+          id: "skill-listing",
+          kind: "skill",
+          label:
+            skills.length > 0
+              ? `${skills.length} skills listed`
+              : "Skill listing",
+          detail:
+            skills.length > 0
+              ? previewText(skills.slice(0, 16).join(", "), 200)
+              : "Available skills injected into context",
+          sourcePath: null,
+          estimatedTokens:
+            skills.length > 0
+              ? Math.max(8, estimateTokensFromText(skills.join("\n")))
+              : null,
+          provenance: "observed",
+          evidence: log,
+          count: skills.length || null,
+        });
+      } else if (
+        kindKey.includes("claude_md") ||
+        kindKey.includes("claudemd") ||
+        kindKey.includes("instruction") ||
+        kindKey === "claude_md_bundle"
+      ) {
+        const files = asStringArray(
+          payloadRecord.files ??
+            payloadRecord.paths ??
+            payloadRecord.claudeMdFiles,
+        );
+        const content =
+          typeof payloadRecord.content === "string"
+            ? payloadRecord.content
+            : typeof payloadRecord.text === "string"
+              ? payloadRecord.text
+              : "";
+        if (files.length > 0) {
+          for (const filePath of files) {
+            const kind = instructionKindForPath(filePath);
+            upsertItem(inventory, {
+              id: `${kind}:${filePath}`,
+              kind,
+              label: path.basename(filePath),
+              detail: previewText(content, 160),
+              sourcePath: filePath,
+              estimatedTokens: content
+                ? Math.max(
+                    1,
+                    Math.round(
+                      estimateTokensFromText(content) / files.length,
+                    ),
+                  )
+                : null,
+              provenance: "observed",
+              evidence: log,
+              skillName: kind === "skill" ? path.basename(path.dirname(filePath)) : null,
+            });
+          }
+        } else {
+          upsertItem(inventory, {
+            id: `instruction:attachment:${sourced.line}`,
+            kind: "instruction",
+            label: "Project instructions",
+            detail: previewText(content || stringifyContent(payloadRecord), 180),
+            sourcePath: null,
+            estimatedTokens: content
+              ? estimateTokensFromText(content)
+              : estimateTokensFromText(stringifyContent(payloadRecord)),
+            provenance: "observed",
+            evidence: log,
+          });
+        }
+      } else if (
+        kindKey.includes("memory") ||
+        kindKey === "memory_files"
+      ) {
+        const files = asStringArray(
+          payloadRecord.files ?? payloadRecord.paths ?? payloadRecord.names,
+        );
+        const content =
+          typeof payloadRecord.content === "string"
+            ? payloadRecord.content
+            : "";
+        if (files.length > 0) {
+          for (const filePath of files) {
+            upsertItem(inventory, {
+              id: `memory:${filePath}`,
+              kind: "memory",
+              label: path.basename(filePath),
+              detail: previewText(content, 160),
+              sourcePath: filePath,
+              estimatedTokens: content
+                ? Math.max(
+                    1,
+                    Math.round(
+                      estimateTokensFromText(content) / files.length,
+                    ),
+                  )
+                : null,
+              provenance: "observed",
+              evidence: log,
+            });
+          }
+        } else {
+          upsertItem(inventory, {
+            id: `memory:attachment:${sourced.line}`,
+            kind: "memory",
+            label: "Memory",
+            detail: previewText(content || stringifyContent(payloadRecord), 180),
+            sourcePath: null,
+            estimatedTokens: content
+              ? estimateTokensFromText(content)
+              : null,
+            provenance: "observed",
+            evidence: log,
+          });
+        }
+      } else {
+        const content = stringifyContent(payloadRecord);
+        upsertItem(inventory, {
+          id: `attachment:${kindKey}:${sourced.line}`,
+          kind: "attachment",
+          label: kindKey.replace(/_/g, " "),
+          detail: previewText(content, 180),
+          sourcePath: null,
+          estimatedTokens: content ? estimateTokensFromText(content) : null,
+          provenance: "observed",
+          evidence: log,
+        });
+      }
+    }
+
+    if (entry.type === "user") {
+      const blocks = asBlocks(entry.message?.content);
+      const text = blocks
+        .filter((b) => b.type === "text" || !b.type)
+        .map((b) => b.text ?? stringifyContent(b.content))
+        .join("\n")
+        .trim();
+
+      if (text) {
+        const reminders = extractSystemReminderBlocks(text);
+        for (const [idx, reminder] of reminders.entries()) {
+          const lower = reminder.toLowerCase();
+          if (
+            lower.includes("claude.md") ||
+            lower.includes("project instructions") ||
+            lower.includes("# claude.md")
+          ) {
+            const pathMatch =
+              reminder.match(
+                /(?:^|\s)((?:\/|\.\/)?[\w./-]*(?:CLAUDE\.md|AGENTS\.md|\.mdc))/m,
+              ) ?? null;
+            const sourcePath = pathMatch?.[1] ?? "CLAUDE.md";
+            upsertItem(inventory, {
+              id: `instruction:${sourcePath}`,
+              kind: "instruction",
+              label: path.basename(sourcePath),
+              detail: previewText(reminder, 180),
+              sourcePath,
+              estimatedTokens: estimateTokensFromText(reminder),
+              provenance: "observed",
+              evidence: log,
+            });
+          } else if (lower.includes("memory.md") || lower.includes("auto memory")) {
+            upsertItem(inventory, {
+              id: `memory:reminder:${sourced.line}:${idx}`,
+              kind: "memory",
+              label: "Memory",
+              detail: previewText(reminder, 180),
+              sourcePath: "MEMORY.md",
+              estimatedTokens: estimateTokensFromText(reminder),
+              provenance: "observed",
+              evidence: log,
+            });
+          } else if (lower.includes("skill")) {
+            upsertItem(inventory, {
+              id: `skill:reminder:${sourced.line}:${idx}`,
+              kind: "skill",
+              label: "Skill reminder",
+              detail: previewText(reminder, 180),
+              sourcePath: null,
+              estimatedTokens: estimateTokensFromText(reminder),
+              provenance: "observed",
+              evidence: log,
+            });
+          } else {
+            upsertItem(inventory, {
+              id: `attachment:reminder:${sourced.line}:${idx}`,
+              kind: "attachment",
+              label: "System reminder",
+              detail: previewText(reminder, 180),
+              sourcePath: null,
+              estimatedTokens: estimateTokensFromText(reminder),
+              provenance: "observed",
+              evidence: log,
+            });
+          }
+        }
+
+        const userVisible = text
+          .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "")
+          .trim();
+        if (userVisible) {
+          userMessageCount += 1;
+          upsertItem(inventory, {
+            id: `user:${entry.uuid ?? userMessageCount}`,
+            kind: "user_message",
+            label: `User message ${userMessageCount}`,
+            detail: previewText(userVisible, 180),
+            sourcePath: null,
+            estimatedTokens: estimateTokensFromText(userVisible),
+            provenance: "inferred",
+            evidence: log,
+          });
+        }
+      }
+
+      for (const block of blocks) {
+        if (block.type !== "tool_result" || !block.tool_use_id) continue;
+        const meta = pendingToolCalls.get(block.tool_use_id);
+        const contentText = stringifyContent(block.content);
+        const resultTokens = estimateTokensFromText(contentText);
+        const toolName = meta?.name ?? "tool";
+
+        if (toolName === "Read" || toolName === "Write" || toolName === "Edit") {
+          const filePath =
+            (typeof meta?.input?.file_path === "string" &&
+              meta.input.file_path) ||
+            (typeof meta?.input?.path === "string" && meta.input.path) ||
+            null;
+          if (filePath) {
+            const kind = looksLikeInstructionPath(filePath)
+              ? instructionKindForPath(filePath)
+              : "file";
+            upsertItem(inventory, {
+              id: `${kind}:${filePath}`,
+              kind,
+              label: path.basename(filePath),
+              detail: previewText(contentText, 180),
+              sourcePath: filePath,
+              estimatedTokens: resultTokens,
+              provenance: "inferred",
+              evidence: log,
+              skillName:
+                kind === "skill"
+                  ? path.basename(path.dirname(filePath))
+                  : null,
+            });
+          }
+        }
+
+        if (toolName === "ToolSearch") {
+          const loaded = asStringArray(
+            Array.isArray(block.content)
+              ? block.content
+              : typeof block.content === "string"
+                ? block.content.split(/[\n,]/).map((s) => s.trim())
+                : [],
+          );
+          const names =
+            loaded.length > 0
+              ? loaded
+              : contentText
+                  .split(/[\n,]/)
+                  .map((s) => s.trim())
+                  .filter((s) => s.startsWith("mcp__") || s.includes("__"));
+          for (const name of names.slice(0, 40)) {
+            const server = mcpServerFromToolName(name);
+            upsertItem(inventory, {
+              id: `tool-schema:${name}`,
+              kind: "tool_schema",
+              label: name,
+              detail: "Schema loaded on demand via ToolSearch",
+              sourcePath: null,
+              estimatedTokens: Math.max(40, Math.round(resultTokens / Math.max(1, names.length))),
+              provenance: "observed",
+              evidence: log,
+              toolName: name,
+              mcpServer: server,
+            });
+            if (server) {
+              upsertItem(inventory, {
+                id: `mcp-server:${server}`,
+                kind: "mcp",
+                label: `MCP · ${server}`,
+                detail: `Loaded schema for ${name}`,
+                sourcePath: null,
+                estimatedTokens: null,
+                provenance: "observed",
+                evidence: log,
+                mcpServer: server,
+              });
+            }
+          }
+        }
+
+        if (
+          toolName === "Skill" ||
+          toolName === "LoadSkill" ||
+          toolName.toLowerCase() === "skills"
+        ) {
+          const skillName =
+            (typeof meta?.input?.skill === "string" && meta.input.skill) ||
+            (typeof meta?.input?.name === "string" && meta.input.name) ||
+            (typeof meta?.input?.skill_name === "string" &&
+              meta.input.skill_name) ||
+            "skill";
+          upsertItem(inventory, {
+            id: `skill:${skillName}`,
+            kind: "skill",
+            label: skillName,
+            detail: previewText(contentText, 180),
+            sourcePath:
+              typeof meta?.input?.path === "string" ? meta.input.path : null,
+            estimatedTokens: resultTokens,
+            provenance: "observed",
+            evidence: log,
+            skillName,
+          });
+        }
+
+        // Generic tool result accretion (skip duplicates already classified as files)
+        if (
+          toolName !== "Read" &&
+          toolName !== "Write" &&
+          toolName !== "Edit" &&
+          toolName !== "ToolSearch" &&
+          toolName !== "Skill" &&
+          toolName !== "LoadSkill"
+        ) {
+          upsertItem(inventory, {
+            id: `tool-result:${block.tool_use_id}`,
+            kind: "tool_result",
+            label: `${toolName} result`,
+            detail: previewText(contentText, 180),
+            sourcePath:
+              typeof meta?.input?.file_path === "string"
+                ? meta.input.file_path
+                : null,
+            estimatedTokens: resultTokens,
+            provenance: "inferred",
+            evidence: log,
+            toolName,
+            mcpServer: mcpServerFromToolName(toolName),
+          });
+        }
+      }
+    }
+
+    if (entry.type === "assistant") {
+      const nodeId = entry.uuid ?? `assistant-${assistantIndex}`;
+      assistantIndex += 1;
+      const u = toUsage(entry.message?.usage);
+      const blocks = asBlocks(entry.message?.content);
+      const text = blocks
+        .filter((b) => b.type === "text")
+        .map((b) => b.text ?? "")
+        .join("\n")
+        .trim();
+      const tools = blocks.filter((b) => b.type === "tool_use");
+
+      for (const tool of tools) {
+        if (!tool.id || !tool.name) continue;
+        pendingToolCalls.set(tool.id, {
+          name: tool.name,
+          input: asInputRecord(tool.input),
+          log,
+        });
+        const server = mcpServerFromToolName(tool.name);
+        if (server) {
+          upsertItem(inventory, {
+            id: `mcp-server:${server}`,
+            kind: "mcp",
+            label: `MCP · ${server}`,
+            detail: `Invoked ${tool.name}`,
+            sourcePath: null,
+            estimatedTokens: null,
+            provenance: "inferred",
+            evidence: log,
+            mcpServer: server,
+            toolName: tool.name,
+          });
+          upsertItem(inventory, {
+            id: `tool-schema:${tool.name}`,
+            kind: "tool_schema",
+            label: tool.name,
+            detail: "MCP tool used this session",
+            sourcePath: null,
+            estimatedTokens: null,
+            provenance: "inferred",
+            evidence: log,
+            toolName: tool.name,
+            mcpServer: server,
+          });
+        }
+      }
+
+      if (totalTokens(u) > 0 || contextSize(u) > 0) {
+        if (!sawBaseline) {
+          sawBaseline = true;
+          const baselineTokens = Math.max(
+            0,
+            u.cacheCreationInputTokens + u.cacheReadInputTokens + u.inputTokens,
+          );
+          // Reserve a share of first-turn cache for the opaque system prompt
+          // when we have no richer attachment inventory yet.
+          const hasObservedLayers = [...inventory.values()].some(
+            (item) =>
+              item.provenance === "observed" &&
+              (item.kind === "instruction" ||
+                item.kind === "mcp" ||
+                item.kind === "skill" ||
+                item.kind === "memory" ||
+                item.kind === "deferred_tools"),
+          );
+          const systemShare = hasObservedLayers
+            ? Math.round(baselineTokens * 0.35)
+            : baselineTokens;
+          upsertItem(inventory, {
+            id: "system-prompt",
+            kind: "system_prompt",
+            label: "System prompt & harness",
+            detail:
+              "Identity, tool-use rules, safety, and environment metadata (cwd, git, model)",
+            sourcePath: null,
+            estimatedTokens: systemShare > 0 ? systemShare : null,
+            provenance: "baseline",
+            evidence: log,
+          });
+        }
+
+        if (text) {
+          assistantMessageCount += 1;
+          upsertItem(inventory, {
+            id: `assistant-text:${nodeId}`,
+            kind: "assistant_message",
+            label: `Assistant reply ${assistantMessageCount}`,
+            detail: previewText(text, 160),
+            sourcePath: null,
+            estimatedTokens: estimateTokensFromText(text),
+            provenance: "inferred",
+            evidence: log,
+          });
+        }
+
+        const point = timeline.find((p) => p.nodeId === nodeId);
+        if (point) {
+          snapshots.set(nodeId, snapshotInventory(inventory, point));
+        }
+      }
+    }
+  }
+
+  return timeline.map(
+    (point) =>
+      snapshots.get(point.nodeId) ?? snapshotInventory(inventory, point),
+  );
+}
+
 function buildTimeline(sourcedEntries: SourcedEntry[]): ContextTimelinePoint[] {
   const points: ContextTimelinePoint[] = [];
   let turn = 0;
@@ -1062,12 +1891,15 @@ export function buildSessionDetail(
     // look at preview / leave as tool with results only
   }
 
+  const timeline = buildTimeline(parsed.entries);
+
   return {
     meta,
     tree: rootBuild.tree,
-    timeline: buildTimeline(parsed.entries),
+    timeline,
     toolImpact: buildToolImpact(parsed.entries),
     agentBreakdown,
+    loadedContext: buildLoadedContext(parsed.entries, timeline),
   };
 }
 

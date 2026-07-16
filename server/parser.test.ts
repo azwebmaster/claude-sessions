@@ -136,5 +136,36 @@ describe("fixture session parse", () => {
     assert.ok(
       assistants.slice(1).some((a) => (a.context?.contextDelta ?? 0) !== 0),
     );
+
+    assert.ok(detail.loadedContext.length >= 1);
+    assert.equal(detail.loadedContext.length, detail.timeline.length);
+    const firstLoaded = detail.loadedContext[0];
+    assert.equal(firstLoaded.nodeId, detail.timeline[0].nodeId);
+    const kinds = new Set(firstLoaded.items.map((i) => i.kind));
+    assert.ok(kinds.has("system_prompt"), "baseline system prompt layer");
+    assert.ok(kinds.has("instruction"), "CLAUDE.md / instructions");
+    assert.ok(kinds.has("mcp"), "MCP servers from attachments");
+    assert.ok(kinds.has("skill"), "skill listing attachment");
+    assert.ok(kinds.has("deferred_tools"), "deferred tool names");
+    assert.ok(kinds.has("memory"), "memory attachment");
+    assert.ok(
+      firstLoaded.categories.some((c) => c.kind === "mcp" && c.itemCount >= 1),
+    );
+
+    const later = detail.loadedContext[detail.loadedContext.length - 1];
+    assert.ok(
+      later.items.some((i) => i.kind === "file"),
+      "later turns should include files read into context",
+    );
+    assert.ok(
+      later.items.some(
+        (i) => i.kind === "skill" && i.skillName === "security-audit",
+      ),
+      "invoked skill should appear in loaded context",
+    );
+    assert.ok(
+      later.items.some((i) => i.kind === "tool_schema"),
+      "ToolSearch-loaded schemas should appear",
+    );
   });
 });

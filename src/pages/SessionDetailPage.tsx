@@ -8,7 +8,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import type { SessionDetail } from "@shared/types";
+import type { LogLineRef, SessionDetail } from "@shared/types";
 import {
   formatTokens,
   totalTokens,
@@ -21,6 +21,7 @@ import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
 import { TurnDetailPanel } from "../components/TurnDetailPanel";
+import { LoadedContextPanel } from "../components/LoadedContextPanel";
 import { LogLinePanel } from "../components/LogLinePanel";
 import { SectionPaper, StatCard } from "../components/ui";
 import { layout, motion } from "../theme";
@@ -30,6 +31,7 @@ export function SessionDetailPage() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [evidenceLog, setEvidenceLog] = useState<LogLineRef | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -37,6 +39,7 @@ export function SessionDetailPage() {
     setDetail(null);
     setError(null);
     setFocusedNodeId(null);
+    setEvidenceLog(null);
     api<SessionDetail>(`/api/sessions/${id}`)
       .then((res) => {
         if (cancelled) return;
@@ -50,6 +53,10 @@ export function SessionDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    setEvidenceLog(null);
+  }, [focusedNodeId]);
 
   const focusedTurnIndex = useMemo(() => {
     if (!detail || !focusedNodeId) return -1;
@@ -66,7 +73,8 @@ export function SessionDetailPage() {
       : null;
   const focusedNode =
     detail && focusedNodeId ? findNode(detail.tree, focusedNodeId) : null;
-  const focusedLog = focusedTurn?.log ?? focusedNode?.log ?? null;
+  const focusedLog =
+    evidenceLog ?? focusedTurn?.log ?? focusedNode?.log ?? null;
 
   const forceOpenIds = useMemo(() => {
     if (!detail || !focusedNodeId) return undefined;
@@ -74,6 +82,30 @@ export function SessionDetailPage() {
     if (!ancestors) return undefined;
     return new Set(ancestors);
   }, [detail, focusedNodeId]);
+
+  const focusedLoadedContext = useMemo(() => {
+    if (!detail?.loadedContext?.length) return null;
+    if (focusedNodeId) {
+      const exact = detail.loadedContext.find(
+        (s) => s.nodeId === focusedNodeId,
+      );
+      if (exact) return exact;
+      const ancestors = findAncestorIds(detail.tree, focusedNodeId);
+      if (ancestors) {
+        for (let i = ancestors.length - 1; i >= 0; i -= 1) {
+          const snap = detail.loadedContext.find(
+            (s) => s.nodeId === ancestors[i],
+          );
+          if (snap) return snap;
+        }
+      }
+    }
+    return (
+      detail.loadedContext.find((s) => s.nodeId === focusedTurn?.nodeId) ??
+      detail.loadedContext[0] ??
+      null
+    );
+  }, [detail, focusedNodeId, focusedTurn?.nodeId]);
 
   const backLink = (
     <Link
@@ -198,7 +230,7 @@ export function SessionDetailPage() {
 
       <SectionPaper
         title="Context growth"
-        description={`Context occupancy across assistant turns (${formatTokens(contextSize(meta.usage))} cumulative input+cache). Click a turn to jump the hierarchy to that moment.`}
+        description={`Context occupancy across assistant turns (${formatTokens(contextSize(meta.usage))} cumulative input+cache). Click a turn to inspect token composition and what was loaded into Claude's context at that moment.`}
         sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
       >
         <ContextChart
@@ -209,6 +241,12 @@ export function SessionDetailPage() {
         {focusedTurn ? (
           <TurnDetailPanel point={focusedTurn} previous={previousTurn} />
         ) : null}
+        <LoadedContextPanel
+          snapshot={focusedLoadedContext}
+          onSelectEvidence={(item) => {
+            if (item.evidence) setEvidenceLog(item.evidence);
+          }}
+        />
         <LogLinePanel log={focusedLog} />
       </SectionPaper>
 

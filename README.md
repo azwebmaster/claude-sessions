@@ -10,6 +10,7 @@ TypeScript web app (React + pnpm + ESM) that reads local [Claude Code](https://c
   - **Hierarchy** — root agent → assistant turns → tool calls → results → nested subagents
   - **Token usage** per agent and per assistant turn
   - **Context timeline** — how context size changes across turns
+  - **Loaded context** — what makes up Claude's window at a turn (system prompt, CLAUDE.md / instructions, memory, MCPs, skills, deferred tools, files, conversation)
   - **Tool impact** — ranked by attributed context growth; each tool lists its heaviest calls (input + result) with expand for the full list
 
 Demo fixtures under `fixtures/projects` are always included so the UI works without local Claude Code history.

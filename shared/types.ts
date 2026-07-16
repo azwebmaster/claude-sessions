@@ -71,12 +71,74 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+/**
+ * What kind of material is present in Claude's context window.
+ * Mirrors Claude Code harness layers + conversation accretion.
+ */
+export type LoadedContextKind =
+  | "system_prompt"
+  | "instruction"
+  | "memory"
+  | "mcp"
+  | "skill"
+  | "deferred_tools"
+  | "tool_schema"
+  | "user_message"
+  | "assistant_message"
+  | "file"
+  | "tool_result"
+  | "attachment"
+  | "other";
+
+export interface LoadedContextItem {
+  id: string;
+  kind: LoadedContextKind;
+  label: string;
+  detail: string | null;
+  /** File / instruction path when known */
+  sourcePath: string | null;
+  /** Estimated tokens for this item (char/4 heuristic unless noted) */
+  estimatedTokens: number | null;
+  /**
+   * baseline — inferred from first-turn cache / system occupancy
+   * observed — explicit transcript attachment or tool payload
+   * inferred — reconstructed from conversation/tool history
+   */
+  provenance: "baseline" | "observed" | "inferred";
+  evidence: LogLineRef | null;
+  mcpServer?: string | null;
+  toolName?: string | null;
+  skillName?: string | null;
+  count?: number | null;
+}
+
+export interface ContextCategorySummary {
+  kind: LoadedContextKind;
+  label: string;
+  itemCount: number;
+  estimatedTokens: number | null;
+}
+
+/** Snapshot of everything known to be loaded at one assistant turn */
+export interface TurnLoadedContext {
+  nodeId: string;
+  turn: number;
+  contextTokens: number;
+  categories: ContextCategorySummary[];
+  items: LoadedContextItem[];
+  /** True when some items are reconstructed rather than from attachments */
+  inferred: boolean;
+  notes: string[];
+}
+
 export interface SessionDetail {
   meta: SessionListItem;
   tree: TreeNode;
   timeline: ContextTimelinePoint[];
   toolImpact: ToolImpactRow[];
   agentBreakdown: AgentBreakdownRow[];
+  /** Per-turn inventory of what makes up Claude's context window */
+  loadedContext: TurnLoadedContext[];
 }
 
 export interface ContextTimelinePoint {
