@@ -30,12 +30,17 @@ interface LaidOutNode {
 }
 
 const MAX_TOOLS = 12;
-const SVG_WIDTH = 720;
-const LEFT_X = 118;
-const RIGHT_X = 602;
+const SVG_WIDTH = 640;
+const LEFT_X = 108;
+const RIGHT_X = 532;
 const NODE_H = 36;
+const NODE_W = 128;
 const TOP_PAD = 28;
 const BOTTOM_PAD = 20;
+
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 function shortAgentLabel(label: string): string {
   if (label.startsWith("Subagent · ")) {
@@ -63,7 +68,7 @@ function layoutNodes(
     return {
       id: row.agentId,
       label: shortAgentLabel(row.label),
-      sublabel: `${row.toolCallCount} calls`,
+      sublabel: pluralize(row.toolCallCount, "call"),
       x: LEFT_X,
       y,
       kind: "agent" as const,
@@ -187,9 +192,9 @@ export function AgentToolDiagram({
           sx={{
             display: "block",
             width: "100%",
-            minWidth: { xs: 520, sm: 640 },
+            minWidth: { xs: 560, sm: "100%" },
             height: "auto",
-            maxHeight: { xs: 360, md: 420 },
+            maxHeight: { xs: 340, md: 420 },
             fontFamily: theme.typography.fontFamily,
           }}
         >
@@ -248,7 +253,8 @@ export function AgentToolDiagram({
                 : 0.08
               : 0.25 + weight * 0.55;
             const midX = (from.x + to.x) / 2;
-            const d = `M ${from.x + 72} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x - 72} ${to.y}`;
+            const half = NODE_W / 2;
+            const d = `M ${from.x + half} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x - half} ${to.y}`;
             return (
               <g key={`${link.agentId}:${link.toolName}`}>
                 <path
@@ -282,7 +288,7 @@ export function AgentToolDiagram({
             const faded = dimInactive && !related;
             const chip =
               node.agentKind === "subagent" ? subStyle : rootStyle;
-            const w = 144;
+            const w = NODE_W;
             const h = NODE_H;
             return (
               <g
@@ -361,7 +367,7 @@ export function AgentToolDiagram({
                     l.toolName === node.id && l.agentId === selectedAgentId,
                 ));
             const faded = dimInactive && !related;
-            const w = 144;
+            const w = NODE_W;
             const h = NODE_H;
             return (
               <g
@@ -444,10 +450,12 @@ export function AgentToolDiagram({
           lineHeight: 1.4,
         }}
       >
-        {rows.length} agent{rows.length === 1 ? "" : "s"} · {totalCalls} tool
-        call{totalCalls === 1 ? "" : "s"}
-        {hiddenToolCount > 0 ? ` · top ${MAX_TOOLS} tools (+${hiddenToolCount} more)` : ""}
+        {pluralize(rows.length, "agent")} · {pluralize(totalCalls, "tool call")}
+        {hiddenToolCount > 0
+          ? ` · top ${MAX_TOOLS} tools (+${hiddenToolCount} more)`
+          : ""}
         {" · "}click an agent, tool, or link to focus the hierarchy
+        {" · "}scroll sideways on narrow screens
       </Typography>
     </Box>
   );
