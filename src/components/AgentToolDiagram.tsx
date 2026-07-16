@@ -59,12 +59,21 @@ interface LaidOutNode {
   sublabel: string;
   kind: "agent" | "tool";
   agentKind?: "root_agent" | "subagent";
+  /** Bare tool name (tool nodes only; `id` is agent-scoped). */
+  toolName?: string;
+  /** Agent that owns this tool node (tool nodes only). */
+  ownerAgentId?: string;
   /** Normalized 0–1 weight used for circle radius. */
   sizeWeight: number;
   /** Pixel radius of the node circle. */
   radius: number;
   /** Token count shown in the sublabel (metric-dependent for agents). */
   sizeTokens: number;
+}
+
+/** Stable node id so the same tool name can appear once per agent. */
+function toolNodeId(agentId: string, toolName: string): string {
+  return `tool:${agentId}:${toolName}`;
 }
 
 interface ViewTransform {
@@ -303,14 +312,20 @@ function arrangeRadialPositions(
     );
   });
 
-  // Primary caller per tool (highest call volume) drives preferred angle.
-  const primaryAgentByTool = new Map<string, string>();
+  // Each tool node is scoped to one agent; that owner drives preferred angle.
+  // Fall back to link volume only for legacy nodes missing ownerAgentId.
+  const ownerByToolId = new Map<string, string>();
+  for (const tool of tools) {
+    if (tool.ownerAgentId) ownerByToolId.set(tool.id, tool.ownerAgentId);
+  }
   const primaryCallsByTool = new Map<string, number>();
   for (const link of links) {
-    const prev = primaryCallsByTool.get(link.toolName) ?? -1;
+    const id = toolNodeId(link.agentId, link.toolName);
+    if (ownerByToolId.has(id)) continue;
+    const prev = primaryCallsByTool.get(id) ?? -1;
     if (link.callCount > prev) {
-      primaryCallsByTool.set(link.toolName, link.callCount);
-      primaryAgentByTool.set(link.toolName, link.agentId);
+      primaryCallsByTool.set(id, link.callCount);
+      ownerByToolId.set(id, link.agentId);
     }
   }
 
@@ -321,7 +336,7 @@ function arrangeRadialPositions(
     if (slice.length === 0) return;
 
     const preferred = slice.map((tool, i) => {
-      const agentId = primaryAgentByTool.get(tool.id);
+      const agentId = tool.ownerAgentId ?? ownerByToolId.get(tool.id);
       const fromAgent = agentId != null ? agentAngle.get(agentId) : undefined;
       if (fromAgent != null) {
         // Stagger multi-ring tools slightly so stacked rings don't align.
@@ -425,8 +440,10 @@ export function AgentToolDiagram({
     world,
     layoutKey,
   } = useMemo(() => {
+    // One link (and later one tool node) per agent↔tool pair — never share a
+    // tool node across agents that happen to call the same tool name.
     const linkList: DiagramLink[] = [];
-    const totals = new Map<string, number>();
+    const callsByToolName = new Map<string, number>();
     let calls = 0;
     for (const row of rows) {
       for (const tool of row.tools ?? []) {
@@ -435,22 +452,27 @@ export function AgentToolDiagram({
           toolName: tool.toolName,
           callCount: tool.callCount,
         });
-        totals.set(
+        callsByToolName.set(
           tool.toolName,
-          (totals.get(tool.toolName) ?? 0) + tool.callCount,
+          (callsByToolName.get(tool.toolName) ?? 0) + tool.callCount,
         );
         calls += tool.callCount;
       }
     }
-    const ranked = [...totals.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([toolName, callCount]) => ({ toolName, callCount }));
+    const ranked = [...linkList].sort(
+      (a, b) =>
+        b.callCount - a.callCount ||
+        a.toolName.localeCompare(b.toolName) ||
+        a.agentId.localeCompare(b.agentId),
+    );
     const canExpand = ranked.length > COLLAPSED_MAX_TOOLS;
     const visible =
       showAllTools || !canExpand
         ? ranked
         : ranked.slice(0, COLLAPSED_MAX_TOOLS);
-    const visibleNames = new Set(visible.map((t) => t.toolName));
+    const visibleIds = new Set(
+      visible.map((t) => toolNodeId(t.agentId, t.toolName)),
+    );
 
     const agentSizeValues = rows.map((r) =>
       agentSizeMetric === "peakContext"
@@ -458,9 +480,18 @@ export function AgentToolDiagram({
         : totalTokens(r.usage),
     );
     const maxAgentSize = Math.max(...agentSizeValues, 1);
-    const toolCtxValues = visible.map(
-      (t) => toolContextByName.get(t.toolName) ?? 0,
-    );
+
+    // Attribute session-level tool impact proportionally by this agent's share
+    // of calls for that tool name (impact rows are not per-agent).
+    const attributedCtx = (link: DiagramLink) => {
+      const global = toolContextByName.get(link.toolName) ?? 0;
+      if (global <= 0) return 0;
+      const totalForName = callsByToolName.get(link.toolName) ?? 0;
+      if (totalForName <= 0) return 0;
+      return global * (link.callCount / totalForName);
+    };
+
+    const toolCtxValues = visible.map(attributedCtx);
     const maxToolCtx = Math.max(...toolCtxValues, 1);
     // If no tool impact data, fall back to call volume so sizes still vary.
     const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
@@ -480,8 +511,8 @@ export function AgentToolDiagram({
         sizeTokens,
       };
     });
-    const tools: LaidOutNode[] = visible.map((tool) => {
-      const ctx = toolContextByName.get(tool.toolName) ?? 0;
+    const tools: LaidOutNode[] = visible.map((tool, i) => {
+      const ctx = toolCtxValues[i] ?? 0;
       const sizeWeight = useToolCallsFallback
         ? tool.callCount / maxToolCalls
         : ctx / maxToolCtx;
@@ -489,8 +520,10 @@ export function AgentToolDiagram({
       const toolRMax =
         visible.length > COLLAPSED_MAX_TOOLS ? TOOL_R_MAX - 6 : TOOL_R_MAX;
       return {
-        id: tool.toolName,
+        id: toolNodeId(tool.agentId, tool.toolName),
         label: tool.toolName,
+        toolName: tool.toolName,
+        ownerAgentId: tool.agentId,
         sublabel: useToolCallsFallback
           ? `${tool.callCount}×`
           : formatTokens(ctx),
@@ -504,7 +537,9 @@ export function AgentToolDiagram({
     const metrics = worldMetrics(agents.length, tools.length);
 
     return {
-      links: linkList.filter((l) => visibleNames.has(l.toolName)),
+      links: linkList.filter((l) =>
+        visibleIds.has(toolNodeId(l.agentId, l.toolName)),
+      ),
       agentNodes: agents,
       toolNodes: tools,
       hiddenToolCount: Math.max(0, ranked.length - visible.length),
@@ -708,7 +743,7 @@ export function AgentToolDiagram({
     (node: LaidOutNode) => {
       if (movedRef.current) return;
       if (node.kind === "agent") onSelectAgent?.(node.id);
-      else onSelectTool?.(node.id);
+      else if (node.toolName) onSelectTool?.(node.toolName, node.ownerAgentId);
     },
     [onSelectAgent, onSelectTool],
   );
@@ -742,18 +777,22 @@ export function AgentToolDiagram({
     const selected =
       node.kind === "agent"
         ? selectedAgentId === node.id
-        : selectedToolName === node.id;
+        : selectedToolName != null &&
+          node.toolName === selectedToolName &&
+          (selectedAgentId == null || selectedAgentId === node.ownerAgentId);
     const related =
       selected ||
       (node.kind === "agent"
         ? selectedToolName != null &&
-          links.some(
-            (l) => l.agentId === node.id && l.toolName === selectedToolName,
-          )
+          (selectedAgentId != null
+            ? selectedAgentId === node.id
+            : links.some(
+                (l) =>
+                  l.agentId === node.id && l.toolName === selectedToolName,
+              ))
         : selectedAgentId != null &&
-          links.some(
-            (l) => l.toolName === node.id && l.agentId === selectedAgentId,
-          ));
+          selectedToolName == null &&
+          node.ownerAgentId === selectedAgentId);
     const faded = dimInactive && !related;
     const chip =
       node.kind === "tool"
@@ -1103,8 +1142,9 @@ export function AgentToolDiagram({
               ))}
 
               {links.map((link) => {
+                const toolId = toolNodeId(link.agentId, link.toolName);
                 const from = positions[link.agentId];
-                const to = positions[link.toolName];
+                const to = positions[toolId];
                 if (!from || !to) return null;
                 const active = linkActive(link);
                 const weight = link.callCount / maxLink;
@@ -1118,7 +1158,7 @@ export function AgentToolDiagram({
                 const dy = to.y - from.y;
                 const dist = Math.hypot(dx, dy) || 1;
                 const fromR = (nodeRadiusById.get(link.agentId) ?? AGENT_R_MIN) - 1;
-                const toR = (nodeRadiusById.get(link.toolName) ?? TOOL_R_MIN) - 1;
+                const toR = (nodeRadiusById.get(toolId) ?? TOOL_R_MIN) - 1;
                 // Shorten endpoints so arrows meet the circle edge
                 const sx = from.x + (dx / dist) * fromR;
                 const sy = from.y + (dy / dist) * fromR;
@@ -1133,7 +1173,7 @@ export function AgentToolDiagram({
                 const cpy = midY + ny * bow;
                 const d = `M ${sx} ${sy} Q ${cpx} ${cpy} ${ex} ${ey}`;
                 return (
-                  <g key={`${link.agentId}:${link.toolName}`}>
+                  <g key={toolId}>
                     <path
                       d={d}
                       fill="none"
