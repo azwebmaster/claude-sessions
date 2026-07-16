@@ -32,7 +32,6 @@ import {
 } from "@shared/formatAnalysisPrompt";
 import { EmptyState, SectionPaper } from "./ui";
 import { apiAnalyzeStream, apiGetCachedAnalysis } from "../lib/api";
-import { layout } from "../theme";
 
 const MODEL_LABELS: Record<AnalyzeModelAlias, string> = {
   opus: "Opus",
@@ -291,7 +290,6 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
     <SectionPaper
       title="Agent SDK analysis"
       description="Use the Claude Agent SDK to read session metadata/messages and produce optimization findings for this run. Inherits system auth from your Claude user settings, CLI login, or server environment. Results are cached until the session file changes."
-      sx={{ mb: layout.sectionGap }}
     >
       <Stack
         direction={{ xs: "column", sm: "row" }}

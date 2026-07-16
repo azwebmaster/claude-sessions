@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 import {
   Alert,
@@ -6,6 +6,8 @@ import {
   CircularProgress,
   Link,
   Stack,
+  Tab,
+  Tabs,
   Typography,
 } from "@mui/material";
 import type { LogLineRef, SessionDetail } from "@shared/types";
@@ -34,11 +36,50 @@ import { SessionAnalysisPanel } from "../components/SessionAnalysisPanel";
 import { SectionPaper, StatCard } from "../components/ui";
 import { layout, motion } from "../theme";
 
+type DetailTab = "analysis" | "context" | "diagram" | "hierarchy";
+type ContextDetailTab = "turn" | "loaded";
+
+const DETAIL_TABS: { id: DetailTab; label: string }[] = [
+  { id: "analysis", label: "Analysis" },
+  { id: "context", label: "Context" },
+  { id: "diagram", label: "Diagram" },
+  { id: "hierarchy", label: "Hierarchy" },
+];
+
+function TabPanel({
+  id,
+  active,
+  children,
+}: {
+  id: string;
+  active: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Box
+      role="tabpanel"
+      id={`${id}-panel`}
+      aria-labelledby={`${id}-tab`}
+      hidden={!active}
+      sx={{
+        display: active ? "block" : "none",
+        minWidth: 0,
+        animation: active ? motion.riseFast : undefined,
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 export function SessionDetailPage() {
   const { id } = useParams();
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<DetailTab>("context");
+  const [contextDetailTab, setContextDetailTab] =
+    useState<ContextDetailTab>("turn");
   const [logModalOpen, setLogModalOpen] = useState(false);
   const [modalLog, setModalLog] = useState<LogLineRef | null>(null);
 
@@ -57,6 +98,8 @@ export function SessionDetailPage() {
     setDetail(null);
     setError(null);
     setFocusedNodeId(null);
+    setActiveTab("context");
+    setContextDetailTab("turn");
     setLogModalOpen(false);
     setModalLog(null);
     api<SessionDetail>(`/api/sessions/${id}`)
@@ -72,6 +115,20 @@ export function SessionDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  const handleDetailTabChange = (
+    _event: SyntheticEvent,
+    next: DetailTab,
+  ) => {
+    setActiveTab(next);
+  };
+
+  const handleContextDetailTabChange = (
+    _event: SyntheticEvent,
+    next: ContextDetailTab,
+  ) => {
+    setContextDetailTab(next);
+  };
 
   const focusedTurnIndex = useMemo(() => {
     if (!detail || !focusedNodeId) return -1;
@@ -314,114 +371,182 @@ export function SessionDetailPage() {
         </Box>
       </Stack>
 
-      <SessionAnalysisPanel sessionId={meta.id} />
-
-      <SectionPaper
-        title="Context growth"
-        description={`Context occupancy across assistant turns (${formatTokens(contextSize(meta.usage))} cumulative input+cache). Click a turn to inspect token composition and what was loaded into Claude's context at that moment.`}
-        sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
-      >
-        <ContextChart
-          points={detail.timeline}
-          selectedNodeId={focusedNodeId}
-          onSelect={(point) => setFocusedNodeId(point.nodeId)}
-        />
-        {focusedTurn ? (
-          <TurnDetailPanel
-            point={focusedTurn}
-            previous={previousTurn}
-            onViewLog={(point) => openLogModal(point.log)}
-          />
-        ) : null}
-        <LoadedContextPanel
-          snapshot={focusedLoadedContext}
-          onSelectEvidence={(item) => {
-            if (item.evidence) openLogModal(item.evidence);
-          }}
-        />
-      </SectionPaper>
-
-      <SectionPaper
-        title="Agent ↔ tool calls"
-        description="Who called what: root agent at the center. Each tool node is scoped to the agent that called it (shared tool names are not merged across agents). Toggle agent labels between peak context and total tokens; circle size always tracks the number shown (agents and tools share one scale). Tool labels use attributed growth. Link thickness scales with call volume. Dense sessions start with the top agent↔tool pairs; expand to show every tool on extra rings. Drag nodes to rearrange, use Arrange to auto-layout (tools cluster near their callers), scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
-        sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
-      >
-        <AgentToolDiagram
-          rows={detail.agentBreakdown}
-          toolImpact={detail.toolImpact}
-          selectedAgentId={selectedAgentId}
-          selectedToolName={focusedToolName}
-          onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
-          onSelectTool={focusToolByName}
-        />
-      </SectionPaper>
-
       <Box
         sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "1.15fr 0.85fr" },
-          gap: layout.sectionGap,
+          borderBottom: 1,
+          borderColor: "divider",
+          mb: layout.sectionGap,
           animation: motion.rise,
           minWidth: 0,
-          alignItems: "start",
         }}
       >
-        <SectionPaper
-          title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to highlight it; use the chevron to expand or collapse; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
+        <Tabs
+          value={activeTab}
+          onChange={handleDetailTabChange}
+          variant="scrollable"
+          scrollButtons="auto"
+          allowScrollButtonsMobile
+          aria-label="Session detail panels"
         >
+          {DETAIL_TABS.map((tab) => (
+            <Tab
+              key={tab.id}
+              value={tab.id}
+              label={tab.label}
+              id={`${tab.id}-tab`}
+              aria-controls={`${tab.id}-panel`}
+            />
+          ))}
+        </Tabs>
+      </Box>
+
+      <TabPanel id="analysis" active={activeTab === "analysis"}>
+        <SessionAnalysisPanel sessionId={meta.id} />
+      </TabPanel>
+
+      <TabPanel id="context" active={activeTab === "context"}>
+        <SectionPaper
+          title="Context growth"
+          description={`Context occupancy across assistant turns (${formatTokens(contextSize(meta.usage))} cumulative input+cache). Click a turn to inspect token composition and what was loaded into Claude's context at that moment.`}
+          sx={{ animation: motion.riseMedium }}
+        >
+          <ContextChart
+            points={detail.timeline}
+            selectedNodeId={focusedNodeId}
+            onSelect={(point) => setFocusedNodeId(point.nodeId)}
+          />
           <Box
             sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
-              maxHeight: { xs: "55vh", sm: "65vh", md: "70vh" },
-              overflow: "auto",
-              overscrollBehavior: "contain",
-              WebkitOverflowScrolling: "touch",
-              pr: 0.5,
+              mt: 2,
+              borderBottom: 1,
+              borderColor: "divider",
               minWidth: 0,
             }}
           >
-            <HierarchyTree
-              node={detail.tree}
-              defaultOpen
-              focusedNodeId={focusedNodeId}
-              forceOpenIds={forceOpenIds}
-              onFocusNode={(nodeId) => {
-                setFocusedNodeId(nodeId);
-              }}
-              onViewLog={(node) => {
-                if (node.log) openLogModal(node.log);
-              }}
-            />
+            <Tabs
+              value={contextDetailTab}
+              onChange={handleContextDetailTabChange}
+              variant="scrollable"
+              scrollButtons="auto"
+              allowScrollButtonsMobile
+              aria-label="Selected turn panels"
+            >
+              <Tab
+                value="turn"
+                label="Turn detail"
+                id="turn-tab"
+                aria-controls="turn-panel"
+              />
+              <Tab
+                value="loaded"
+                label="Loaded context"
+                id="loaded-tab"
+                aria-controls="loaded-panel"
+              />
+            </Tabs>
           </Box>
+          <TabPanel id="turn" active={contextDetailTab === "turn"}>
+            <TurnDetailPanel
+              point={focusedTurn}
+              previous={previousTurn}
+              onViewLog={(point) => openLogModal(point.log)}
+            />
+          </TabPanel>
+          <TabPanel id="loaded" active={contextDetailTab === "loaded"}>
+            <LoadedContextPanel
+              snapshot={focusedLoadedContext}
+              onSelectEvidence={(item) => {
+                if (item.evidence) openLogModal(item.evidence);
+              }}
+            />
+          </TabPanel>
         </SectionPaper>
+      </TabPanel>
 
-        <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
+      <TabPanel id="diagram" active={activeTab === "diagram"}>
+        <SectionPaper
+          title="Agent ↔ tool calls"
+          description="Who called what: root agent at the center. Each tool node is scoped to the agent that called it (shared tool names are not merged across agents). Toggle agent labels between peak context and total tokens; circle size always tracks the number shown (agents and tools share one scale). Tool labels use attributed growth. Link thickness scales with call volume. Dense sessions start with the top agent↔tool pairs; expand to show every tool on extra rings. Drag nodes to rearrange, use Arrange to auto-layout (tools cluster near their callers), scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
+          sx={{ animation: motion.riseMedium }}
+        >
+          <AgentToolDiagram
+            rows={detail.agentBreakdown}
+            toolImpact={detail.toolImpact}
+            selectedAgentId={selectedAgentId}
+            selectedToolName={focusedToolName}
+            onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
+            onSelectTool={focusToolByName}
+          />
+        </SectionPaper>
+      </TabPanel>
+
+      <TabPanel id="hierarchy" active={activeTab === "hierarchy"}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", lg: "1.15fr 0.85fr" },
+            gap: layout.sectionGap,
+            minWidth: 0,
+            alignItems: "start",
+          }}
+        >
           <SectionPaper
-            title="Agents"
-            description="Usage diagram per agent: peak context size and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the hierarchy. Selecting a tool call highlights the agent that ran it."
+            title="Agent & tool hierarchy"
+            description={`Root agent → tool calls → results / subagents. Click a node to highlight it; use the chevron to expand or collapse; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
           >
-            <AgentBreakdown
-              rows={detail.agentBreakdown}
-              selectedAgentId={selectedAgentId}
-              onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
-            />
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 0.5,
+                maxHeight: { xs: "55vh", sm: "65vh", md: "70vh" },
+                overflow: "auto",
+                overscrollBehavior: "contain",
+                WebkitOverflowScrolling: "touch",
+                pr: 0.5,
+                minWidth: 0,
+              }}
+            >
+              <HierarchyTree
+                node={detail.tree}
+                defaultOpen
+                focusedNodeId={focusedNodeId}
+                forceOpenIds={forceOpenIds}
+                onFocusNode={(nodeId) => {
+                  setFocusedNodeId(nodeId);
+                }}
+                onViewLog={(node) => {
+                  if (node.log) openLogModal(node.log);
+                }}
+              />
+            </Box>
           </SectionPaper>
 
-          <SectionPaper
-            title="Tool impact on context"
-            description="Tools ranked by attributed context growth. Click a tool or call to highlight it in the hierarchy and the agent that ran it."
-          >
-            <ToolImpactList
-              rows={detail.toolImpact}
-              focusedToolUseId={focusedToolUseId}
-              onSelectCall={focusToolCall}
-            />
-          </SectionPaper>
-        </Stack>
-      </Box>
+          <Stack spacing={layout.sectionGap} sx={{ minWidth: 0 }}>
+            <SectionPaper
+              title="Agents"
+              description="Usage diagram per agent: peak context size and tool-call volume (bars scaled within the session), plus a summary of the tools each agent used. Click an agent to highlight it in the hierarchy. Selecting a tool call highlights the agent that ran it."
+            >
+              <AgentBreakdown
+                rows={detail.agentBreakdown}
+                selectedAgentId={selectedAgentId}
+                onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
+              />
+            </SectionPaper>
+
+            <SectionPaper
+              title="Tool impact on context"
+              description="Tools ranked by attributed context growth. Click a tool or call to highlight it in the hierarchy and the agent that ran it."
+            >
+              <ToolImpactList
+                rows={detail.toolImpact}
+                focusedToolUseId={focusedToolUseId}
+                onSelectCall={focusToolCall}
+              />
+            </SectionPaper>
+          </Stack>
+        </Box>
+      </TabPanel>
 
       <LogLinePanel
         log={modalLog}

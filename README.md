@@ -6,14 +6,11 @@ TypeScript web app (React + pnpm + ESM) that reads local [Claude Code](https://c
 
 - Scans `~/.claude/projects` and `~/.config/claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`)
 - Lists sessions with summary, project path, token totals, peak context, tool/subagent counts
-- Opens a session to show:
-  - **Hierarchy** — root agent → assistant turns → tool calls → results → nested subagents
-  - **Agent ↔ tool diagram** — interactive radial view (root centered; each tool node scoped to its calling agent; agent label = peak context or total tokens; circle size tracks the number shown on a shared agent/tool scale; tool label = attributed growth; link weight = call volume; expand to show all tools; zoom, pan, drag to rearrange; Arrange to auto-layout)
-  - **Token usage** per agent and per assistant turn
-  - **Context timeline** — how context size changes across turns
-  - **Loaded context** — what makes up Claude's window at a turn (system prompt, CLAUDE.md / instructions, memory, MCPs, skills, deferred tools, files, conversation)
-  - **Tool impact** — ranked by attributed context growth; each tool lists its heaviest calls (input + result) with expand for the full list
-  - **Agent SDK analysis** — one-click optimization report via [`@anthropic-ai/claude-agent-sdk`](https://code.claude.com/docs/en/agent-sdk) (`getSessionInfo` / `getSessionMessages` + structured `query`)
+- Opens a session in tabs:
+    - **Analysis** — Agent SDK optimization report via [`@anthropic-ai/claude-agent-sdk`](https://code.claude.com/docs/en/agent-sdk) (`getSessionInfo` / `getSessionMessages` + structured `query`)
+    - **Context** — context timeline across turns; nested tabs for turn token composition and loaded context (system prompt, CLAUDE.md / instructions, memory, MCPs, skills, deferred tools, files, conversation)
+    - **Diagram** — interactive radial agent ↔ tool view (root centered; each tool node scoped to its calling agent; agent label = peak context or total tokens; circle size tracks the number shown on a shared agent/tool scale; tool label = attributed growth; link weight = call volume; expand to show all tools; zoom, pan, drag to rearrange; Arrange to auto-layout)
+    - **Hierarchy** — root agent → assistant turns → tool calls → results → nested subagents, plus per-agent usage and tool impact ranked by attributed context growth
 
 Demo fixtures under `fixtures/projects` are always included so the UI works without local Claude Code history.
 
