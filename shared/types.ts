@@ -158,6 +158,20 @@ export interface SessionAnalysisRecommendation {
   impact: string;
 }
 
+/**
+ * Anthropic model aliases accepted by the Agent SDK analyze path.
+ * Full model ids (e.g. `claude-haiku-4-5`) are rejected — use these only.
+ */
+export const ANALYZE_MODEL_ALIASES = ["opus", "sonnet", "haiku"] as const;
+export type AnalyzeModelAlias = (typeof ANALYZE_MODEL_ALIASES)[number];
+export const DEFAULT_ANALYZE_MODEL_ALIAS: AnalyzeModelAlias = "haiku";
+
+export function isAnalyzeModelAlias(
+  value: string,
+): value is AnalyzeModelAlias {
+  return (ANALYZE_MODEL_ALIASES as readonly string[]).includes(value);
+}
+
 /** Structured optimization report from the Claude Agent SDK */
 export interface SessionAnalysis {
   sessionId: string;
@@ -206,6 +220,7 @@ export interface AnalyzeErrorEvent {
     | "empty"
     | "budget"
     | "timeout"
+    | "invalid"
     | "unknown";
 }
 
