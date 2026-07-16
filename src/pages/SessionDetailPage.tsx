@@ -317,7 +317,7 @@ export function SessionDetailPage() {
 
       <SectionPaper
         title="Agent ↔ tool calls"
-        description="Who called what: root agent at the center, with circle size scaled by context (peak context for agents, attributed growth for tools). Link thickness scales with call volume. Drag nodes to rearrange, scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
+        description="Who called what: root agent at the center, with circle size scaled by context (peak context for agents, attributed growth for tools). Link thickness scales with call volume. Dense sessions start with the top tools; expand to show every tool on extra rings. Drag nodes to rearrange, scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
         sx={{ mb: layout.sectionGap, animation: motion.riseMedium }}
       >
         <AgentToolDiagram

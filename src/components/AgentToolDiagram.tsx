@@ -10,7 +10,9 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import CenterFocusStrongIcon from "@mui/icons-material/CenterFocusStrong";
 import RemoveIcon from "@mui/icons-material/Remove";
-import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
+import { Box, Button, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import type { AgentBreakdownRow, ToolImpactRow } from "@shared/types";
 import { formatTokens } from "@shared/types";
@@ -67,21 +69,25 @@ type DragMode =
       offsetY: number;
     };
 
-const MAX_TOOLS = 12;
-/** Expanded world so the radial layout has room to breathe. */
-const WORLD_W = 960;
-const WORLD_H = 720;
-const MIN_SCALE = 0.35;
+/** Collapsed view keeps the densest sessions readable. */
+const COLLAPSED_MAX_TOOLS = 12;
+/** Prefer two tool rings once the outer ring would feel crowded. */
+const TOOLS_PER_RING = 14;
+const MIN_SCALE = 0.28;
 const MAX_SCALE = 2.75;
 const ZOOM_STEP = 1.18;
 
 const AGENT_R_MIN = 28;
 const AGENT_R_MAX = 64;
-const TOOL_R_MIN = 22;
+const TOOL_R_MIN = 20;
 const TOOL_R_MAX = 48;
-/** Distance from center to subagent ring / tool ring. */
-const SUBAGENT_RING = 210;
-const TOOL_RING = 340;
+
+interface WorldMetrics {
+  width: number;
+  height: number;
+  subagentRing: number;
+  toolRings: number[];
+}
 
 function pluralize(count: number, singular: string, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
@@ -109,6 +115,27 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
+/** Scale the canvas and ring radii with how many nodes we need to place. */
+function worldMetrics(agentCount: number, toolCount: number): WorldMetrics {
+  const ringAgents = Math.max(0, agentCount - 1);
+  const toolRingCount = Math.max(1, Math.ceil(Math.max(toolCount, 1) / TOOLS_PER_RING));
+  const subagentRing = clamp(190 + ringAgents * 8, 190, 280);
+  const firstToolRing = subagentRing + clamp(110 + toolCount * 2, 120, 200);
+  const toolRings: number[] = [];
+  for (let i = 0; i < toolRingCount; i++) {
+    toolRings.push(firstToolRing + i * 110);
+  }
+  const outer = toolRings[toolRings.length - 1] ?? firstToolRing;
+  const pad = 96;
+  const side = Math.ceil((outer + pad) * 2);
+  return {
+    width: clamp(side, 960, 1600),
+    height: clamp(side, 720, 1400),
+    subagentRing,
+    toolRings,
+  };
+}
+
 /** Map a 0–1 weight to a radius; sqrt keeps areas closer to perceptual scale. */
 function radiusFromWeight(weight: number, minR: number, maxR: number): number {
   const w = clamp(weight, 0, 1);
@@ -117,15 +144,16 @@ function radiusFromWeight(weight: number, minR: number, maxR: number): number {
 
 /**
  * Default layout: root agent at the world center, subagents on an inner ring,
- * tools on an expanded outer ring.
+ * tools on one or more expanded outer rings (extra rings when the set is large).
  */
 function initialRadialPositions(
   agents: LaidOutNode[],
   tools: LaidOutNode[],
+  world: WorldMetrics,
 ): Record<string, Point> {
   const positions: Record<string, Point> = {};
-  const cx = WORLD_W / 2;
-  const cy = WORLD_H / 2;
+  const cx = world.width / 2;
+  const cy = world.height / 2;
 
   // Prefer the root agent at center; fall back to the first agent.
   const centerAgent =
@@ -150,23 +178,31 @@ function initialRadialPositions(
           : angleOffset + (i / n) * Math.PI * 2 - Math.PI / 2;
       const jitter =
         (hash01(`${node.id}:ang`) - 0.5) * (n > 1 ? (Math.PI * 2) / n : 0) * 0.35;
-      const rJitter = (hash01(`${node.id}:r`) - 0.5) * ringRadius * 0.12;
+      const rJitter = (hash01(`${node.id}:r`) - 0.5) * ringRadius * 0.1;
       const angle = baseAngle + jitter;
       const r = ringRadius + rJitter;
       positions[node.id] = {
-        x: clamp(cx + Math.cos(angle) * r, node.radius + 16, WORLD_W - node.radius - 16),
-        y: clamp(cy + Math.sin(angle) * r, node.radius + 16, WORLD_H - node.radius - 16),
+        x: clamp(cx + Math.cos(angle) * r, node.radius + 16, world.width - node.radius - 16),
+        y: clamp(cy + Math.sin(angle) * r, node.radius + 16, world.height - node.radius - 16),
       };
     });
   };
 
-  // Subagents (and extra roots) on the inner ring; tools on the expanded outer ring.
-  placeOnRing(ringAgents, SUBAGENT_RING, 0);
-  placeOnRing(
-    tools,
-    TOOL_RING,
-    tools.length > 0 ? Math.PI / tools.length : 0,
-  );
+  placeOnRing(ringAgents, world.subagentRing, 0);
+
+  // Distribute tools across concentric outer rings so expanded views stay readable.
+  const ringCount = Math.max(1, world.toolRings.length);
+  const perRing = Math.ceil(tools.length / ringCount) || 1;
+  world.toolRings.forEach((ringRadius, ringIndex) => {
+    const slice = tools.slice(ringIndex * perRing, (ringIndex + 1) * perRing);
+    placeOnRing(
+      slice,
+      ringRadius,
+      slice.length > 0
+        ? Math.PI / slice.length + ringIndex * (Math.PI / Math.max(slice.length, 2))
+        : 0,
+    );
+  });
 
   return positions;
 }
@@ -191,16 +227,20 @@ function zoomAt(
   };
 }
 
-function fitView(containerW: number, containerH: number): ViewTransform {
+function fitView(
+  containerW: number,
+  containerH: number,
+  world: WorldMetrics,
+): ViewTransform {
   const scale = clamp(
-    Math.min(containerW / WORLD_W, containerH / WORLD_H) * 0.92,
+    Math.min(containerW / world.width, containerH / world.height) * 0.92,
     MIN_SCALE,
     MAX_SCALE,
   );
   return {
     scale,
-    tx: (containerW - WORLD_W * scale) / 2,
-    ty: (containerH - WORLD_H * scale) / 2,
+    tx: (containerW - world.width * scale) / 2,
+    ty: (containerH - world.height * scale) / 2,
   };
 }
 
@@ -223,6 +263,8 @@ export function AgentToolDiagram({
   const dragRef = useRef<DragMode | null>(null);
   const movedRef = useRef(false);
 
+  const [showAllTools, setShowAllTools] = useState(false);
+
   const toolContextByName = useMemo(() => {
     const map = new Map<string, number>();
     for (const row of toolImpact) {
@@ -231,96 +273,118 @@ export function AgentToolDiagram({
     return map;
   }, [toolImpact]);
 
-  const { links, agentNodes, toolNodes, hiddenToolCount, totalCalls, layoutKey } =
-    useMemo(() => {
-      const linkList: DiagramLink[] = [];
-      const totals = new Map<string, number>();
-      let calls = 0;
-      for (const row of rows) {
-        for (const tool of row.tools ?? []) {
-          linkList.push({
-            agentId: row.agentId,
-            toolName: tool.toolName,
-            callCount: tool.callCount,
-          });
-          totals.set(
-            tool.toolName,
-            (totals.get(tool.toolName) ?? 0) + tool.callCount,
-          );
-          calls += tool.callCount;
-        }
+  const {
+    links,
+    agentNodes,
+    toolNodes,
+    hiddenToolCount,
+    totalToolKinds,
+    totalCalls,
+    world,
+    layoutKey,
+  } = useMemo(() => {
+    const linkList: DiagramLink[] = [];
+    const totals = new Map<string, number>();
+    let calls = 0;
+    for (const row of rows) {
+      for (const tool of row.tools ?? []) {
+        linkList.push({
+          agentId: row.agentId,
+          toolName: tool.toolName,
+          callCount: tool.callCount,
+        });
+        totals.set(
+          tool.toolName,
+          (totals.get(tool.toolName) ?? 0) + tool.callCount,
+        );
+        calls += tool.callCount;
       }
-      const ranked = [...totals.entries()]
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .map(([toolName, callCount]) => ({ toolName, callCount }));
-      const visible = ranked.slice(0, MAX_TOOLS);
-      const visibleNames = new Set(visible.map((t) => t.toolName));
+    }
+    const ranked = [...totals.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([toolName, callCount]) => ({ toolName, callCount }));
+    const canExpand = ranked.length > COLLAPSED_MAX_TOOLS;
+    const visible =
+      showAllTools || !canExpand
+        ? ranked
+        : ranked.slice(0, COLLAPSED_MAX_TOOLS);
+    const visibleNames = new Set(visible.map((t) => t.toolName));
 
-      const maxAgentCtx = Math.max(...rows.map((r) => r.peakContextTokens), 1);
-      const toolCtxValues = visible.map(
-        (t) => toolContextByName.get(t.toolName) ?? 0,
-      );
-      const maxToolCtx = Math.max(...toolCtxValues, 1);
-      // If no tool impact data, fall back to call volume so sizes still vary.
-      const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
-      const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
+    const maxAgentCtx = Math.max(...rows.map((r) => r.peakContextTokens), 1);
+    const toolCtxValues = visible.map(
+      (t) => toolContextByName.get(t.toolName) ?? 0,
+    );
+    const maxToolCtx = Math.max(...toolCtxValues, 1);
+    // If no tool impact data, fall back to call volume so sizes still vary.
+    const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
+    const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
 
-      const agents: LaidOutNode[] = rows.map((row) => {
-        const contextWeight = row.peakContextTokens / maxAgentCtx;
-        return {
-          id: row.agentId,
-          label: shortAgentLabel(row.label),
-          sublabel: formatTokens(row.peakContextTokens),
-          kind: "agent" as const,
-          agentKind: row.kind,
-          contextWeight,
-          radius: radiusFromWeight(contextWeight, AGENT_R_MIN, AGENT_R_MAX),
-          contextTokens: row.peakContextTokens,
-        };
-      });
-      const tools: LaidOutNode[] = visible.map((tool) => {
-        const ctx = toolContextByName.get(tool.toolName) ?? 0;
-        const contextWeight = useToolCallsFallback
-          ? tool.callCount / maxToolCalls
-          : ctx / maxToolCtx;
-        return {
-          id: tool.toolName,
-          label: tool.toolName,
-          sublabel: useToolCallsFallback
-            ? `${tool.callCount}×`
-            : formatTokens(ctx),
-          kind: "tool" as const,
-          contextWeight,
-          radius: radiusFromWeight(contextWeight, TOOL_R_MIN, TOOL_R_MAX),
-          contextTokens: ctx,
-        };
-      });
-
+    const agents: LaidOutNode[] = rows.map((row) => {
+      const contextWeight = row.peakContextTokens / maxAgentCtx;
       return {
-        links: linkList.filter((l) => visibleNames.has(l.toolName)),
-        agentNodes: agents,
-        toolNodes: tools,
-        hiddenToolCount: Math.max(0, ranked.length - visible.length),
-        totalCalls: calls,
-        layoutKey: [
-          ...agents.map((a) => a.id),
-          ...tools.map((t) => t.id),
-        ].join("|"),
+        id: row.agentId,
+        label: shortAgentLabel(row.label),
+        sublabel: formatTokens(row.peakContextTokens),
+        kind: "agent" as const,
+        agentKind: row.kind,
+        contextWeight,
+        radius: radiusFromWeight(contextWeight, AGENT_R_MIN, AGENT_R_MAX),
+        contextTokens: row.peakContextTokens,
       };
-    }, [rows, toolContextByName]);
+    });
+    const tools: LaidOutNode[] = visible.map((tool) => {
+      const ctx = toolContextByName.get(tool.toolName) ?? 0;
+      const contextWeight = useToolCallsFallback
+        ? tool.callCount / maxToolCalls
+        : ctx / maxToolCtx;
+      // Slightly smaller circles when many tools share the canvas.
+      const toolRMax =
+        visible.length > COLLAPSED_MAX_TOOLS ? TOOL_R_MAX - 6 : TOOL_R_MAX;
+      return {
+        id: tool.toolName,
+        label: tool.toolName,
+        sublabel: useToolCallsFallback
+          ? `${tool.callCount}×`
+          : formatTokens(ctx),
+        kind: "tool" as const,
+        contextWeight,
+        radius: radiusFromWeight(contextWeight, TOOL_R_MIN, toolRMax),
+        contextTokens: ctx,
+      };
+    });
+
+    const metrics = worldMetrics(agents.length, tools.length);
+
+    return {
+      links: linkList.filter((l) => visibleNames.has(l.toolName)),
+      agentNodes: agents,
+      toolNodes: tools,
+      hiddenToolCount: Math.max(0, ranked.length - visible.length),
+      totalToolKinds: ranked.length,
+      totalCalls: calls,
+      world: metrics,
+      layoutKey: [
+        showAllTools ? "all" : "top",
+        ...agents.map((a) => a.id),
+        ...tools.map((t) => t.id),
+      ].join("|"),
+    };
+  }, [rows, toolContextByName, showAllTools]);
 
   const [positions, setPositions] = useState<Record<string, Point>>(() =>
-    initialRadialPositions(agentNodes, toolNodes),
+    initialRadialPositions(agentNodes, toolNodes, world),
   );
   const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
   const layoutKeyRef = useRef(layoutKey);
+  const worldRef = useRef(world);
+  worldRef.current = world;
 
-  // Re-layout when the agent/tool set changes (not when counts alone update).
+  // Re-layout when the agent/tool set or expand mode changes.
   useEffect(() => {
     if (layoutKeyRef.current === layoutKey) return;
     layoutKeyRef.current = layoutKey;
-    setPositions(initialRadialPositions(agentNodes, toolNodes));
-  }, [layoutKey, agentNodes, toolNodes]);
+    setPositions(initialRadialPositions(agentNodes, toolNodes, world));
+  }, [layoutKey, agentNodes, toolNodes, world]);
 
   // Fit the world into the viewport when the graph membership changes.
   useEffect(() => {
@@ -328,9 +392,9 @@ export function AgentToolDiagram({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
-      setView(fitView(rect.width, rect.height));
+      setView(fitView(rect.width, rect.height, world));
     }
-  }, [layoutKey]);
+  }, [layoutKey, world]);
 
   // Seed an initial fit once the viewport has a real size.
   useEffect(() => {
@@ -345,7 +409,7 @@ export function AgentToolDiagram({
         if (current.scale !== 1 || current.tx !== 0 || current.ty !== 0) {
           return current;
         }
-        return fitView(width, height);
+        return fitView(width, height, worldRef.current);
       });
     });
     ro.observe(el);
@@ -378,13 +442,13 @@ export function AgentToolDiagram({
   }, [allNodes]);
 
   const resetLayout = useCallback(() => {
-    setPositions(initialRadialPositions(agentNodes, toolNodes));
+    setPositions(initialRadialPositions(agentNodes, toolNodes, world));
     const el = viewportRef.current;
     if (el) {
       const rect = el.getBoundingClientRect();
-      setView(fitView(rect.width, rect.height));
+      setView(fitView(rect.width, rect.height, world));
     }
-  }, [agentNodes, toolNodes]);
+  }, [agentNodes, toolNodes, world]);
 
   const zoomBy = useCallback((factor: number) => {
     const el = viewportRef.current;
@@ -436,13 +500,13 @@ export function AgentToolDiagram({
       e.stopPropagation();
       movedRef.current = false;
       const pos = positionsRef.current[nodeId] ?? { x: 0, y: 0 };
-      const world = clientToWorld(e.clientX, e.clientY);
+      const worldPt = clientToWorld(e.clientX, e.clientY);
       dragRef.current = {
         type: "node",
         nodeId,
         pointerId: e.pointerId,
-        offsetX: world.x - pos.x,
-        offsetY: world.y - pos.y,
+        offsetX: worldPt.x - pos.x,
+        offsetY: worldPt.y - pos.y,
       };
       e.currentTarget.setPointerCapture(e.pointerId);
     },
@@ -464,10 +528,10 @@ export function AgentToolDiagram({
         }));
         return;
       }
-      const world = clientToWorld(e.clientX, e.clientY);
+      const worldPt = clientToWorld(e.clientX, e.clientY);
       const next = {
-        x: world.x - drag.offsetX,
-        y: world.y - drag.offsetY,
+        x: worldPt.x - drag.offsetX,
+        y: worldPt.y - drag.offsetY,
       };
       const prev = positionsRef.current[drag.nodeId];
       if (
@@ -504,6 +568,7 @@ export function AgentToolDiagram({
 
   const maxLink = Math.max(...links.map((l) => l.callCount), 1);
   const dimInactive = Boolean(selectedAgentId) || Boolean(selectedToolName);
+  const canExpandTools = totalToolKinds > COLLAPSED_MAX_TOOLS;
 
   const linkActive = (link: DiagramLink) => {
     if (selectedAgentId && selectedToolName) {
@@ -644,6 +709,7 @@ export function AgentToolDiagram({
             top: 8,
             right: 8,
             zIndex: 2,
+            alignItems: "center",
             bgcolor: alpha(theme.palette.background.paper, 0.92),
             border: 1,
             borderColor: "divider",
@@ -651,6 +717,43 @@ export function AgentToolDiagram({
             p: 0.25,
           }}
         >
+          {canExpandTools ? (
+            <Tooltip
+              title={
+                showAllTools
+                  ? `Show top ${COLLAPSED_MAX_TOOLS} tools`
+                  : `Show all ${totalToolKinds} tools`
+              }
+            >
+              <Button
+                size="small"
+                color="inherit"
+                aria-pressed={showAllTools}
+                aria-label={
+                  showAllTools
+                    ? `Collapse to top ${COLLAPSED_MAX_TOOLS} tools`
+                    : `Expand to all ${totalToolKinds} tools`
+                }
+                onClick={() => setShowAllTools((v) => !v)}
+                startIcon={
+                  showAllTools ? (
+                    <UnfoldLessIcon fontSize="small" />
+                  ) : (
+                    <UnfoldMoreIcon fontSize="small" />
+                  )
+                }
+                sx={{
+                  textTransform: "none",
+                  fontSize: "0.72rem",
+                  px: 1,
+                  minWidth: 0,
+                  color: "text.secondary",
+                }}
+              >
+                {showAllTools ? "Top tools" : "All tools"}
+              </Button>
+            </Tooltip>
+          ) : null}
           <Tooltip title="Zoom in">
             <IconButton
               size="small"
@@ -683,11 +786,16 @@ export function AgentToolDiagram({
         <Box
           ref={viewportRef}
           sx={{
-            height: { xs: 360, sm: 440, md: 520 },
+            height: {
+              xs: showAllTools ? 440 : 400,
+              sm: showAllTools ? 560 : 480,
+              md: showAllTools ? 640 : 560,
+            },
             width: "100%",
             touchAction: "none",
             cursor: "grab",
             userSelect: "none",
+            transition: "height 220ms ease",
             "&:active": { cursor: "grabbing" },
           }}
         >
@@ -742,23 +850,26 @@ export function AgentToolDiagram({
             <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
               {/* Soft guide rings for the radial layout */}
               <circle
-                cx={WORLD_W / 2}
-                cy={WORLD_H / 2}
-                r={SUBAGENT_RING}
+                cx={world.width / 2}
+                cy={world.height / 2}
+                r={world.subagentRing}
                 fill="none"
                 stroke={alpha(theme.palette.divider, 0.55)}
                 strokeWidth={1}
                 strokeDasharray="4 6"
               />
-              <circle
-                cx={WORLD_W / 2}
-                cy={WORLD_H / 2}
-                r={TOOL_RING}
-                fill="none"
-                stroke={alpha(theme.palette.divider, 0.4)}
-                strokeWidth={1}
-                strokeDasharray="2 8"
-              />
+              {world.toolRings.map((ring) => (
+                <circle
+                  key={ring}
+                  cx={world.width / 2}
+                  cy={world.height / 2}
+                  r={ring}
+                  fill="none"
+                  stroke={alpha(theme.palette.divider, 0.4)}
+                  strokeWidth={1}
+                  strokeDasharray="2 8"
+                />
+              ))}
 
               {links.map((link) => {
                 const from = positions[link.agentId];
@@ -826,23 +937,54 @@ export function AgentToolDiagram({
         </Box>
       </Box>
 
-      <Typography
-        variant="mono"
-        color="text.secondary"
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={{ xs: 0.75, sm: 1.5 }}
         sx={{
           mt: 1,
-          fontSize: { xs: "0.68rem", sm: "0.72rem" },
-          lineHeight: 1.4,
+          alignItems: { xs: "stretch", sm: "center" },
+          justifyContent: "space-between",
         }}
       >
-        {pluralize(rows.length, "agent")} · {pluralize(totalCalls, "tool call")}
-        {hiddenToolCount > 0
-          ? ` · top ${MAX_TOOLS} tools (+${hiddenToolCount} more)`
-          : ""}
-        {" · "}circle size = context
-        {" · "}root centered · drag to rearrange · scroll or +/− to zoom · click
-        to focus
-      </Typography>
+        <Typography
+          variant="mono"
+          color="text.secondary"
+          sx={{
+            fontSize: { xs: "0.68rem", sm: "0.72rem" },
+            lineHeight: 1.4,
+          }}
+        >
+          {pluralize(rows.length, "agent")} · {pluralize(totalCalls, "tool call")}
+          {showAllTools
+            ? ` · all ${totalToolKinds} tools`
+            : hiddenToolCount > 0
+              ? ` · top ${COLLAPSED_MAX_TOOLS} tools (+${hiddenToolCount} more)`
+              : totalToolKinds > 0
+                ? ` · ${pluralize(totalToolKinds, "tool")}`
+                : ""}
+          {" · "}circle size = context
+          {" · "}root centered · drag to rearrange · scroll or +/− to zoom · click
+          to focus
+        </Typography>
+        {canExpandTools && !showAllTools ? (
+          <Button
+            size="small"
+            variant="text"
+            color="primary"
+            onClick={() => setShowAllTools(true)}
+            startIcon={<UnfoldMoreIcon fontSize="small" />}
+            sx={{
+              alignSelf: { xs: "flex-start", sm: "center" },
+              textTransform: "none",
+              fontSize: "0.75rem",
+              px: 0.5,
+              minWidth: 0,
+            }}
+          >
+            Expand diagram (+{hiddenToolCount} tools)
+          </Button>
+        ) : null}
+      </Stack>
     </Box>
   );
 }
