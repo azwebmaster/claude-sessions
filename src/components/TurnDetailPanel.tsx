@@ -1,5 +1,5 @@
 import { useTheme } from "@mui/material/styles";
-import { Box, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import type { ContextTimelinePoint } from "@shared/types";
 import { formatTokens } from "@shared/types";
 import { alertSurface, motion, usagePartColors } from "../theme";
@@ -7,6 +7,7 @@ import { alertSurface, motion, usagePartColors } from "../theme";
 interface Props {
   point: ContextTimelinePoint | null;
   previous: ContextTimelinePoint | null;
+  onViewLog?: (point: ContextTimelinePoint) => void;
 }
 
 interface UsagePart {
@@ -22,7 +23,7 @@ function exact(n: number): string {
   return n.toLocaleString();
 }
 
-export function TurnDetailPanel({ point, previous }: Props) {
+export function TurnDetailPanel({ point, previous, onViewLog }: Props) {
   const theme = useTheme();
   const colors = usagePartColors(theme);
   const warningSurface = alertSurface(theme, "warning");
@@ -103,9 +104,30 @@ export function TurnDetailPanel({ point, previous }: Props) {
         animation: motion.riseFast,
       }}
     >
-      <Typography variant="subtitle2" sx={{ fontSize: "0.95rem", mb: 0.5 }}>
-        Turn {point.turn}: {point.label}
-      </Typography>
+      <Box
+        sx={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+          mb: 0.5,
+        }}
+      >
+        <Typography variant="subtitle2" sx={{ fontSize: "0.95rem" }}>
+          Turn {point.turn}: {point.label}
+        </Typography>
+        {point.log && onViewLog ? (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => onViewLog(point)}
+            sx={{ fontSize: "0.75rem", py: 0.25 }}
+          >
+            View transcript line
+          </Button>
+        ) : null}
+      </Box>
       <Typography color="text.secondary" sx={{ fontSize: "0.82rem", mb: 1.5 }}>
         {isBaseline ? (
           <>

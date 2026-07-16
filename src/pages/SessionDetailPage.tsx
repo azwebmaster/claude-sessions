@@ -31,7 +31,17 @@ export function SessionDetailPage() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [evidenceLog, setEvidenceLog] = useState<LogLineRef | null>(null);
+  const [logModalOpen, setLogModalOpen] = useState(false);
+  const [modalLog, setModalLog] = useState<LogLineRef | null>(null);
+
+  const openLogModal = (log: LogLineRef | null | undefined) => {
+    setModalLog(log ?? null);
+    setLogModalOpen(true);
+  };
+
+  const closeLogModal = () => {
+    setLogModalOpen(false);
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -39,7 +49,8 @@ export function SessionDetailPage() {
     setDetail(null);
     setError(null);
     setFocusedNodeId(null);
-    setEvidenceLog(null);
+    setLogModalOpen(false);
+    setModalLog(null);
     api<SessionDetail>(`/api/sessions/${id}`)
       .then((res) => {
         if (cancelled) return;
@@ -54,10 +65,6 @@ export function SessionDetailPage() {
     };
   }, [id]);
 
-  useEffect(() => {
-    setEvidenceLog(null);
-  }, [focusedNodeId]);
-
   const focusedTurnIndex = useMemo(() => {
     if (!detail || !focusedNodeId) return -1;
     return detail.timeline.findIndex((p) => p.nodeId === focusedNodeId);
@@ -71,10 +78,6 @@ export function SessionDetailPage() {
     detail && focusedTurnIndex > 0
       ? detail.timeline[focusedTurnIndex - 1]
       : null;
-  const focusedNode =
-    detail && focusedNodeId ? findNode(detail.tree, focusedNodeId) : null;
-  const focusedLog =
-    evidenceLog ?? focusedTurn?.log ?? focusedNode?.log ?? null;
 
   const forceOpenIds = useMemo(() => {
     if (!detail || !focusedNodeId) return undefined;
@@ -256,15 +259,18 @@ export function SessionDetailPage() {
           onSelect={(point) => setFocusedNodeId(point.nodeId)}
         />
         {focusedTurn ? (
-          <TurnDetailPanel point={focusedTurn} previous={previousTurn} />
+          <TurnDetailPanel
+            point={focusedTurn}
+            previous={previousTurn}
+            onViewLog={(point) => openLogModal(point.log)}
+          />
         ) : null}
         <LoadedContextPanel
           snapshot={focusedLoadedContext}
           onSelectEvidence={(item) => {
-            if (item.evidence) setEvidenceLog(item.evidence);
+            if (item.evidence) openLogModal(item.evidence);
           }}
         />
-        <LogLinePanel log={focusedLog} />
       </SectionPaper>
 
       <Box
@@ -279,7 +285,7 @@ export function SessionDetailPage() {
       >
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Click a node to inspect its JSONL source line. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Click a node to open its JSONL source line. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn." : ""}`}
         >
           <Box
             sx={{
@@ -299,7 +305,11 @@ export function SessionDetailPage() {
               defaultOpen
               focusedNodeId={focusedNodeId}
               forceOpenIds={forceOpenIds}
-              onFocusNode={setFocusedNodeId}
+              onFocusNode={(nodeId) => {
+                setFocusedNodeId(nodeId);
+                const node = findNode(detail.tree, nodeId);
+                if (node?.log) openLogModal(node.log);
+              }}
             />
           </Box>
         </SectionPaper>
@@ -317,6 +327,12 @@ export function SessionDetailPage() {
           </SectionPaper>
         </Stack>
       </Box>
+
+      <LogLinePanel
+        log={modalLog}
+        open={logModalOpen}
+        onClose={closeLogModal}
+      />
     </Box>
   );
 }
