@@ -108,7 +108,7 @@ export function matchesSessionFilters(
 
   if (!inNumericBounds(totalTokens(session.usage), filters.tokens)) return false;
   if (!inNumericBounds(session.peakContextTokens, filters.peakCtx)) return false;
-  if (!inNumericBounds(session.messageCount, filters.turns)) return false;
+  if (!inNumericBounds(session.turnCount, filters.turns)) return false;
 
   if (filters.maxAgeMs != null) {
     const age = sessionAgeMs(session, nowMs);

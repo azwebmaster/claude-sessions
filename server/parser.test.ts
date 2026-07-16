@@ -27,6 +27,7 @@ describe("fixture session parse", () => {
     });
 
     assert.ok(parsed.messageCount >= 1);
+    assert.ok(parsed.turnCount >= 1);
     assert.ok(parsed.toolCallCount >= 2);
     assert.ok(totalTokens(parsed.usage) > 0);
     assert.ok(parsed.peakContextTokens > 0);
@@ -47,6 +48,17 @@ describe("fixture session parse", () => {
 
     assert.equal(detail.tree.kind, "root_agent");
     assert.ok(detail.timeline.length >= 1);
+    assert.equal(
+      parsed.turnCount,
+      detail.timeline.length,
+      "list turnCount must match detail timeline turns",
+    );
+    assert.equal(detail.meta.turnCount, detail.timeline.length);
+    // Fixture has one user prompt and a multi-step tool loop of assistant turns.
+    assert.ok(
+      parsed.turnCount > parsed.messageCount,
+      "turnCount (assistant turns) should exceed messageCount (user prompts)",
+    );
     assert.ok(detail.timeline.every((p) => typeof p.nodeId === "string" && p.nodeId.length > 0));
     const timelineIds = new Set(detail.timeline.map((p) => p.nodeId));
     const walk = (node: typeof detail.tree): string[] => [

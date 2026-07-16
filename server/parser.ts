@@ -89,6 +89,7 @@ export interface RawSessionParse {
   startedAt: string | null;
   updatedAt: string | null;
   messageCount: number;
+  turnCount: number;
   toolCallCount: number;
   subagentCount: number;
   model: string | null;
@@ -98,6 +99,13 @@ export interface RawSessionParse {
   peakContextTokens: number;
   entries: SourcedEntry[];
   subagentFiles: { agentId: string; filePath: string; entries: SourcedEntry[] }[];
+}
+
+/** Assistant entries that appear as turns on the context timeline. */
+function isTimelineAssistantTurn(entry: RawEntry): boolean {
+  if (entry.type !== "assistant") return false;
+  const u = toUsage(entry.message?.usage);
+  return totalTokens(u) > 0 || contextSize(u) > 0;
 }
 
 function toLogRef(source: SourcedEntry): LogLineRef {
@@ -399,6 +407,7 @@ export async function parseSessionFile(
   let startedAt: string | null = null;
   let updatedAt: string | null = null;
   let messageCount = 0;
+  let turnCount = 0;
   let toolCallCount = 0;
   let model: string | null = null;
   let gitBranch: string | null = null;
@@ -432,6 +441,7 @@ export async function parseSessionFile(
       const u = toUsage(entry.message?.usage);
       usage = addUsage(usage, u);
       peakContextTokens = Math.max(peakContextTokens, contextSize(u));
+      if (isTimelineAssistantTurn(entry)) turnCount += 1;
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use") toolCallCount += 1;
       }
@@ -491,6 +501,7 @@ export async function parseSessionFile(
     startedAt,
     updatedAt,
     messageCount,
+    turnCount,
     toolCallCount,
     subagentCount,
     model,
@@ -1510,8 +1521,8 @@ function buildTimeline(sourcedEntries: SourcedEntry[]): ContextTimelinePoint[] {
     if (entry.type !== "assistant") continue;
     const nodeId = entry.uuid ?? `assistant-${assistantIndex}`;
     assistantIndex += 1;
+    if (!isTimelineAssistantTurn(entry)) continue;
     const u = toUsage(entry.message?.usage);
-    if (totalTokens(u) === 0 && contextSize(u) === 0) continue;
     turn += 1;
     const tools = asBlocks(entry.message?.content)
       .filter((b) => b.type === "tool_use")
@@ -1832,6 +1843,7 @@ export function buildSessionDetail(
     startedAt: parsed.startedAt,
     updatedAt: parsed.updatedAt,
     messageCount: parsed.messageCount,
+    turnCount: parsed.turnCount,
     toolCallCount: parsed.toolCallCount,
     subagentCount: parsed.subagentCount,
     model: parsed.model,

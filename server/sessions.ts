@@ -165,6 +165,7 @@ function summarizeFromParse(
     startedAt: parsed.startedAt,
     updatedAt: parsed.updatedAt,
     messageCount: parsed.messageCount,
+    turnCount: parsed.turnCount,
     toolCallCount: parsed.toolCallCount,
     subagentCount: parsed.subagentCount,
     model: parsed.model,
