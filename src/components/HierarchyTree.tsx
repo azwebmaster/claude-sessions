@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, Chip, Collapse, Typography } from "@mui/material";
 import type { TreeNode, TreeNodeKind } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
@@ -8,6 +8,9 @@ interface Props {
   node: TreeNode;
   depth?: number;
   defaultOpen?: boolean;
+  focusedNodeId?: string | null;
+  /** Node ids that must stay expanded to reveal the focused node */
+  forceOpenIds?: ReadonlySet<string>;
 }
 
 const kindColors: Record<TreeNodeKind, { bg: string; color: string }> = {
@@ -21,11 +24,33 @@ const kindColors: Record<TreeNodeKind, { bg: string; color: string }> = {
   system: { bg: "rgba(0, 0, 0, 0.06)", color: "#616161" },
 };
 
-export function HierarchyTree({ node, depth = 0, defaultOpen }: Props) {
+export function HierarchyTree({
+  node,
+  depth = 0,
+  defaultOpen,
+  focusedNodeId = null,
+  forceOpenIds,
+}: Props) {
   const hasChildren = node.children.length > 0;
+  const isFocused = focusedNodeId === node.id;
+  const mustOpen = Boolean(forceOpenIds?.has(node.id));
   const [open, setOpen] = useState(
-    defaultOpen ?? (depth < 2 || node.kind === "subagent" || node.kind === "tool_call"),
+    defaultOpen ??
+      (mustOpen ||
+        depth < 2 ||
+        node.kind === "subagent" ||
+        node.kind === "tool_call"),
   );
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (mustOpen && hasChildren) setOpen(true);
+  }, [mustOpen, hasChildren, focusedNodeId]);
+
+  useEffect(() => {
+    if (!isFocused || !rowRef.current) return;
+    rowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [isFocused, focusedNodeId]);
 
   const usageLabel =
     node.usage && totalTokens(node.usage) > 0
@@ -52,14 +77,22 @@ export function HierarchyTree({ node, depth = 0, defaultOpen }: Props) {
 
   return (
     <Box
+      ref={rowRef}
+      data-node-id={node.id}
       sx={{
-        border: "1px solid transparent",
+        border: isFocused ? "1px solid" : "1px solid transparent",
+        borderColor: isFocused ? "warning.main" : "transparent",
         borderRadius: 1,
-        bgcolor: open ? "action.selected" : "transparent",
-        transition: "border-color 150ms ease, background 150ms ease",
+        bgcolor: isFocused
+          ? "rgba(237, 108, 2, 0.12)"
+          : open
+            ? "action.selected"
+            : "transparent",
+        boxShadow: isFocused ? "inset 3px 0 0 #ef6c00" : "none",
+        transition: "border-color 150ms ease, background 150ms ease, box-shadow 150ms ease",
         "&:hover": {
-          borderColor: "divider",
-          bgcolor: "action.hover",
+          borderColor: isFocused ? "warning.main" : "divider",
+          bgcolor: isFocused ? "rgba(237, 108, 2, 0.14)" : "action.hover",
         },
       }}
     >
@@ -68,6 +101,7 @@ export function HierarchyTree({ node, depth = 0, defaultOpen }: Props) {
         type="button"
         onClick={() => hasChildren && setOpen((v) => !v)}
         aria-expanded={hasChildren ? open : undefined}
+        aria-current={isFocused ? "true" : undefined}
         sx={{
           display: "grid",
           gridTemplateColumns: "auto 1fr auto",
@@ -152,7 +186,13 @@ export function HierarchyTree({ node, depth = 0, defaultOpen }: Props) {
           }}
         >
           {node.children.map((child) => (
-            <HierarchyTree key={child.id} node={child} depth={depth + 1} />
+            <HierarchyTree
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              focusedNodeId={focusedNodeId}
+              forceOpenIds={forceOpenIds}
+            />
           ))}
         </Box>
       </Collapse>

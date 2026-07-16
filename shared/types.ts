@@ -70,6 +70,8 @@ export interface SessionDetail {
 
 export interface ContextTimelinePoint {
   turn: number;
+  /** Matches the assistant TreeNode.id for hierarchy focus */
+  nodeId: string;
   timestamp: string | null;
   label: string;
   contextTokens: number;

@@ -529,8 +529,11 @@ function buildToolImpact(
 function buildTimeline(entries: RawEntry[]): ContextTimelinePoint[] {
   const points: ContextTimelinePoint[] = [];
   let turn = 0;
+  let assistantIndex = 0;
   for (const entry of entries) {
     if (entry.type !== "assistant") continue;
+    const nodeId = entry.uuid ?? `assistant-${assistantIndex}`;
+    assistantIndex += 1;
     const u = toUsage(entry.message?.usage);
     if (totalTokens(u) === 0 && contextSize(u) === 0) continue;
     turn += 1;
@@ -544,6 +547,7 @@ function buildTimeline(entries: RawEntry[]): ContextTimelinePoint[] {
       .join(" ");
     points.push({
       turn,
+      nodeId,
       timestamp: entry.timestamp ?? null,
       label: previewText(text, 80) ?? (tools[0] ? `→ ${tools.join(", ")}` : `Turn ${turn}`),
       contextTokens: contextSize(u),
@@ -584,6 +588,7 @@ function buildAgentTreeFromEntries(
   let peak = 0;
   let toolCalls = 0;
   let messages = 0;
+  let assistantIndex = 0;
   let lastContext: number | null = null;
 
   for (const entry of entries) {
@@ -665,7 +670,7 @@ function buildAgentTreeFromEntries(
       const tools = blocks.filter((b) => b.type === "tool_use");
 
       const assistantNode: TreeNode = {
-        id: entry.uuid ?? `assistant-${root.children.length}`,
+        id: entry.uuid ?? `assistant-${assistantIndex}`,
         kind: "assistant_message",
         label: tools.length ? `Assistant · ${tools.map((t) => t.name).join(", ")}` : "Assistant",
         timestamp: entry.timestamp ?? null,
@@ -682,6 +687,7 @@ function buildAgentTreeFromEntries(
         preview: previewText(text || thinking, 200),
         children: [],
       };
+      assistantIndex += 1;
 
       if (thinking) {
         assistantNode.children.push({
