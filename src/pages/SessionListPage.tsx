@@ -186,7 +186,11 @@ function SessionCard({
             ["Updated", formatDate(session.updatedAt)],
             ["Tokens", formatTokens(totalTokens(session.usage))],
             ["Peak ctx", formatTokens(session.peakContextTokens)],
-            ["Tools / agents", `${session.toolCallCount} / ${1 + session.subagentCount}`],
+            ["Turns", String(session.messageCount)],
+            [
+              "Tools / agents",
+              `${session.toolCallCount} / ${1 + session.subagentCount}`,
+            ],
           ] as const
         ).map(([label, value]) => (
           <Box key={label} sx={{ minWidth: 0 }}>
@@ -443,6 +447,7 @@ export function SessionListPage() {
                     <TableCell>Updated</TableCell>
                     <TableCell>Tokens</TableCell>
                     <TableCell>Peak ctx</TableCell>
+                    <TableCell>Turns</TableCell>
                     <TableCell>Tools</TableCell>
                     <TableCell>Agents</TableCell>
                   </TableRow>
@@ -483,6 +488,11 @@ export function SessionListPage() {
                       <TableCell>
                         <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
                           {formatTokens(s.peakContextTokens)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="mono" sx={{ fontSize: "0.85rem" }}>
+                          {s.messageCount}
                         </Typography>
                       </TableCell>
                       <TableCell>
