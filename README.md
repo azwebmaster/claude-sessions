@@ -8,7 +8,7 @@ TypeScript web app (React + pnpm + ESM) that reads local [Claude Code](https://c
 - Lists sessions with summary, project path, token totals, peak context, tool/subagent counts
 - Opens a session to show:
   - **Hierarchy** — root agent → assistant turns → tool calls → results → nested subagents
-  - **Agent ↔ tool diagram** — interactive radial view (root centered; circle size = context; link weight = call volume; zoom, pan, drag to rearrange)
+  - **Agent ↔ tool diagram** — interactive radial view (root centered; circle size = context; link weight = call volume; expand to show all tools; zoom, pan, drag to rearrange)
   - **Token usage** per agent and per assistant turn
   - **Context timeline** — how context size changes across turns
   - **Loaded context** — what makes up Claude's window at a turn (system prompt, CLAUDE.md / instructions, memory, MCPs, skills, deferred tools, files, conversation)
