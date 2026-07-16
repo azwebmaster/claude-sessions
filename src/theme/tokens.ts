@@ -1,5 +1,5 @@
 import { alpha, type Theme } from "@mui/material/styles";
-import type { TreeNodeKind } from "@shared/types";
+import type { LoadedContextKind, TreeNodeKind } from "@shared/types";
 
 /** IBM Plex Mono stack loaded in index.html. */
 export const monoFontFamily =
@@ -65,6 +65,68 @@ export function usagePartColors(theme: Theme): UsagePartColors {
 export interface KindChipStyle {
   bg: string;
   color: string;
+}
+
+export function contextItemKindStyle(
+  theme: Theme,
+  kind: LoadedContextKind,
+): KindChipStyle {
+  const styles: Record<LoadedContextKind, KindChipStyle> = {
+    system_prompt: {
+      bg: alpha(theme.palette.text.primary, 0.08),
+      color: theme.palette.text.primary,
+    },
+    instruction: {
+      bg: alpha(theme.palette.primary.main, 0.12),
+      color: theme.palette.primary.dark,
+    },
+    memory: {
+      bg: alpha(theme.palette.info.main, 0.12),
+      color: theme.palette.info.dark,
+    },
+    mcp: {
+      bg: alpha(theme.palette.secondary.main, 0.14),
+      color: theme.palette.secondary.dark,
+    },
+    skill: {
+      bg: alpha(theme.palette.success.main, 0.14),
+      color: theme.palette.success.dark,
+    },
+    deferred_tools: {
+      bg: alpha(theme.palette.warning.main, 0.12),
+      color: theme.palette.warning.dark,
+    },
+    tool_schema: {
+      bg: alpha(theme.palette.warning.main, 0.1),
+      color: theme.palette.warning.main,
+    },
+    user_message: {
+      bg: alpha(theme.palette.primary.main, 0.08),
+      color: theme.palette.primary.main,
+    },
+    assistant_message: {
+      bg: alpha(theme.palette.info.main, 0.1),
+      color: theme.palette.info.main,
+    },
+    file: {
+      bg: alpha(theme.palette.success.main, 0.1),
+      color: theme.palette.success.main,
+    },
+    tool_result: {
+      bg: alpha(theme.palette.error.main, 0.08),
+      color: theme.palette.error.dark,
+    },
+    attachment: {
+      bg: alpha(theme.palette.text.primary, 0.06),
+      color: theme.palette.text.secondary,
+    },
+    other: {
+      bg: alpha(theme.palette.text.primary, 0.06),
+      color: theme.palette.text.secondary,
+    },
+  };
+
+  return styles[kind] ?? styles.other;
 }
 
 export function nodeKindStyle(

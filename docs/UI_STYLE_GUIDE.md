@@ -120,6 +120,7 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 | --- | --- |
 | `chartBarColors(theme)` | Timeline bar gradients and focus ring |
 | `usagePartColors(theme)` | Turn detail composition segments |
+| `contextItemKindStyle(theme, kind)` | Loaded-context category chips (MCP, skill, instruction, …) |
 | `nodeKindStyle(theme, kind)` | Hierarchy node chip colors |
 | `focusHighlight(theme)` | Selected tree node border/background |
 | `alertSurface(theme, color)` | Highlight boxes (e.g. top tool impact) |
