@@ -13,6 +13,7 @@ TypeScript web app (React + pnpm + ESM) that reads local [Claude Code](https://c
   - **Context timeline** — how context size changes across turns
   - **Loaded context** — what makes up Claude's window at a turn (system prompt, CLAUDE.md / instructions, memory, MCPs, skills, deferred tools, files, conversation)
   - **Tool impact** — ranked by attributed context growth; each tool lists its heaviest calls (input + result) with expand for the full list
+  - **Agent SDK analysis** — one-click optimization report via [`@anthropic-ai/claude-agent-sdk`](https://code.claude.com/docs/en/agent-sdk) (`getSessionInfo` / `getSessionMessages` + structured `query`)
 
 Demo fixtures under `fixtures/projects` are always included so the UI works without local Claude Code history.
 
@@ -53,6 +54,9 @@ Options:
 ```bash
 claude-sessions serve --port 3000
 claude-sessions serve -H 0.0.0.0 -p 8787
+claude-sessions analyze                 # most recently updated session
+claude-sessions analyze <session-uuid>
+claude-sessions analyze --model claude-haiku-4-5
 claude-sessions --help
 ```
 
@@ -61,7 +65,18 @@ Port can also be set with `$PORT`. During development you can run the CLI via ts
 ```bash
 pnpm exec tsx cli/index.ts serve
 pnpm exec tsx cli/index.ts serve --port 3000
+pnpm exec tsx cli/index.ts analyze
 ```
+
+### Agent SDK analysis
+
+Session detail pages expose **Analyze session**, which:
+
+1. Builds a compact profile brief from the existing JSONL profiler
+2. Enriches it with Agent SDK session APIs when the transcript is under `~/.claude/projects`
+3. Runs a single-turn structured `query()` (default model: `claude-haiku-4-5`, override with `$CLAUDE_SESSIONS_ANALYZE_MODEL` or `--model`)
+
+Requires Anthropic auth (`ANTHROPIC_API_KEY` or `claude auth login`). The HTTP endpoint is `POST /api/sessions/:id/analyze`.
 
 ## Scripts
 

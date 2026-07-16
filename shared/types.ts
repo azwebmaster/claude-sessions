@@ -141,6 +141,36 @@ export interface SessionDetail {
   loadedContext: TurnLoadedContext[];
 }
 
+/** Severity for Agent SDK analysis findings */
+export type AnalysisSeverity = "info" | "warning" | "critical";
+
+export interface SessionAnalysisFinding {
+  severity: AnalysisSeverity;
+  title: string;
+  detail: string;
+  relatedTool?: string | null;
+}
+
+export interface SessionAnalysisRecommendation {
+  title: string;
+  detail: string;
+  /** Expected payoff if the recommendation is applied */
+  impact: string;
+}
+
+/** Structured optimization report from the Claude Agent SDK */
+export interface SessionAnalysis {
+  sessionId: string;
+  summary: string;
+  findings: SessionAnalysisFinding[];
+  recommendations: SessionAnalysisRecommendation[];
+  model: string | null;
+  durationMs: number;
+  costUsd: number | null;
+  /** True when SDK session metadata / messages were included in the brief */
+  usedSdkSessionApi: boolean;
+}
+
 export interface ContextTimelinePoint {
   turn: number;
   /** Matches the assistant TreeNode.id for hierarchy focus */
