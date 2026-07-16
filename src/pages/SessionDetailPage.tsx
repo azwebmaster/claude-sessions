@@ -25,20 +25,20 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Box
       sx={{
-        bgcolor: "rgba(255, 255, 255, 0.08)",
-        border: "1px solid rgba(255, 255, 255, 0.12)",
+        bgcolor: "action.hover",
+        border: 1,
+        borderColor: "divider",
         borderRadius: 1.5,
         px: 1.5,
         py: 1.25,
-        color: "#eef7f1",
       }}
     >
       <Typography
+        color="text.secondary"
         sx={{
           fontSize: "0.68rem",
           textTransform: "uppercase",
           letterSpacing: "0.05em",
-          opacity: 0.7,
         }}
       >
         {label}
@@ -88,10 +88,8 @@ export function SessionDetailPage() {
         display: "inline-flex",
         alignItems: "center",
         gap: 0.5,
-        color: "rgba(236, 245, 238, 0.85)",
         mb: 1.5,
         fontSize: "0.9rem",
-        "&:hover": { color: "#fff" },
       }}
     >
       ← All sessions
@@ -142,7 +140,6 @@ export function SessionDetailPage() {
             variant="h1"
             sx={{
               m: 0,
-              color: "#f3faf5",
               fontSize: { xs: "1.35rem", md: "1.9rem" },
               maxWidth: "40rem",
             }}
@@ -150,9 +147,9 @@ export function SessionDetailPage() {
             {meta.summary ?? "Untitled session"}
           </Typography>
           <Typography
+            color="text.secondary"
             sx={{
               mt: 0.5,
-              color: "rgba(236, 245, 238, 0.7)",
               fontFamily: mono,
               fontSize: "0.78rem",
             }}
@@ -192,7 +189,7 @@ export function SessionDetailPage() {
         }}
       >
         <Paper sx={{ p: 2.5 }}>
-          <Typography variant="h2" sx={{ mb: 1.5 }}>
+          <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
             Agent & tool hierarchy
           </Typography>
           <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
@@ -215,7 +212,7 @@ export function SessionDetailPage() {
 
         <Stack spacing={2}>
           <Paper sx={{ p: 2.5 }}>
-            <Typography variant="h2" sx={{ mb: 1.5 }}>
+            <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
               Context size over turns
             </Typography>
             <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
@@ -226,14 +223,14 @@ export function SessionDetailPage() {
           </Paper>
 
           <Paper sx={{ p: 2.5 }}>
-            <Typography variant="h2" sx={{ mb: 1.5 }}>
+            <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
               Agents
             </Typography>
             <AgentBreakdown rows={detail.agentBreakdown} />
           </Paper>
 
           <Paper sx={{ p: 2.5 }}>
-            <Typography variant="h2" sx={{ mb: 1.5 }}>
+            <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
               Tool impact on context
             </Typography>
             <ToolImpactList rows={detail.toolImpact} />

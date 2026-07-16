@@ -40,7 +40,7 @@ export function ContextChart({ points }: Props) {
               minWidth: 10,
               height: Math.max(8, (p.contextTokens / max) * 120),
               borderRadius: "6px 6px 2px 2px",
-              background: "linear-gradient(180deg, #e07a45, #1f7a5c)",
+              background: "linear-gradient(180deg, #42a5f5, #1976d2)",
               position: "relative",
               transition: "transform 160ms ease, filter 160ms ease",
               cursor: "default",

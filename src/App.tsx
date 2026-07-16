@@ -34,19 +34,19 @@ export function App() {
               fontWeight: 700,
               fontSize: { xs: "1.4rem", md: "1.85rem" },
               letterSpacing: "-0.03em",
-              color: "#f3faf5",
-              "& span": { color: "#f0a57a" },
+              color: "text.primary",
+              "& span": { color: "primary.main" },
             }}
           >
             Claude <span>Sessions</span>
           </Typography>
-          <Typography sx={{ color: "rgba(236, 245, 238, 0.7)", fontSize: "0.9rem" }}>
+          <Typography color="text.secondary" sx={{ fontSize: "0.9rem" }}>
             Visualize · profile · optimize local Claude Code runs
           </Typography>
         </Stack>
         <Typography
+          color="text.secondary"
           sx={{
-            color: "rgba(236, 245, 238, 0.65)",
             fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
             fontSize: "0.75rem",
             textAlign: "right",
