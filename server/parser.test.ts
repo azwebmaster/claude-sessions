@@ -57,6 +57,35 @@ describe("fixture session parse", () => {
       ),
     );
     assert.ok(
+      readImpact.calls.every(
+        (c) =>
+          (c.inputPreview && c.inputPreview.length > 0) ||
+          (c.resultPreview && c.resultPreview.length > 0),
+      ),
+      "each Read call should expose input or result detail",
+    );
+    assert.ok(
+      readImpact.calls.some((c) => c.inputPreview?.includes("token.ts")),
+    );
+    assert.ok(
+      readImpact.calls.some((c) => (c.resultPreview?.length ?? 0) > 0),
+    );
+
+    const bashOrGlob = detail.toolImpact.find(
+      (t) => t.toolName === "Glob" || t.toolName === "Bash",
+    );
+    assert.ok(bashOrGlob);
+    assert.ok(bashOrGlob.calls[0]?.inputPreview);
+
+    // Hierarchy tool nodes should carry the detail in the label, not just a bare name.
+    const toolLabels: string[] = [];
+    const walk = (n: typeof detail.tree) => {
+      if (n.kind === "tool_call") toolLabels.push(n.label);
+      for (const c of n.children) walk(c);
+    };
+    walk(detail.tree);
+    assert.ok(toolLabels.some((l) => l.includes(" · ")));
+    assert.ok(
       detail.toolImpact[0].contextGrowthAttributed >=
         detail.toolImpact[detail.toolImpact.length - 1]
           .contextGrowthAttributed ||

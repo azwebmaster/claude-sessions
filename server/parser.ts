@@ -121,43 +121,71 @@ function estimateResultTokens(block: ContentBlock): number {
   return estimateTokensFromText(stringifyContent(block.content));
 }
 
+function asInputRecord(
+  input: unknown,
+): Record<string, unknown> | null {
+  if (!input) return null;
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return { value: trimmed };
+    }
+    return { value: trimmed };
+  }
+  if (typeof input === "object" && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+  return null;
+}
+
 function toolInputPreview(
   name: string,
-  input?: Record<string, unknown>,
+  input?: unknown,
 ): string | null {
-  if (!input) return null;
+  const record = asInputRecord(input);
+  if (!record) return null;
+
   const pick = (...keys: string[]): string | null => {
     for (const key of keys) {
-      const value = input[key];
+      const value = record[key];
       if (typeof value === "string" && value.trim()) {
         return previewText(value, 140);
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
       }
     }
     return null;
   };
 
-  switch (name) {
-    case "Read":
-    case "Write":
-    case "Edit":
-    case "NotebookEdit":
-      return pick("file_path", "path", "notebook_path");
-    case "Bash":
-    case "Shell":
-      return pick("command", "description");
-    case "Grep":
-    case "Glob":
-      return pick("pattern", "glob_pattern", "glob", "path", "query");
-    case "WebSearch":
-    case "WebFetch":
-      return pick("search_term", "query", "url", "explanation");
-    case "Task":
-    case "Agent":
-    case "TaskCreate":
-      return pick("description", "prompt", "subagent_type");
-    default:
-      return (
-        pick(
+  const specific = (() => {
+    switch (name) {
+      case "Read":
+      case "Write":
+      case "Edit":
+      case "NotebookEdit":
+        return pick("file_path", "path", "notebook_path");
+      case "Bash":
+      case "Shell":
+        return pick("command", "description");
+      case "Grep":
+      case "Glob":
+        return pick("pattern", "glob_pattern", "glob", "path", "query");
+      case "WebSearch":
+      case "WebFetch":
+        return pick("search_term", "query", "url", "explanation");
+      case "Task":
+      case "Agent":
+      case "TaskCreate":
+        return pick("description", "prompt", "subagent_type");
+      default:
+        return pick(
           "file_path",
           "path",
           "command",
@@ -166,9 +194,79 @@ function toolInputPreview(
           "url",
           "description",
           "prompt",
-        ) ?? previewText(stringifyContent(input), 140)
-      );
+          "value",
+        );
+    }
+  })();
+
+  return specific ?? previewText(stringifyContent(record), 140);
+}
+
+function toolResultPreview(content: unknown): string | null {
+  return previewText(stringifyContent(content), 220);
+}
+
+/** Attach a tool result onto the matching impact call / pending attribution. */
+function applyToolResult(opts: {
+  toolUseId: string;
+  content: unknown;
+  isError: boolean;
+  timestamp: string | null;
+  byTool: Map<
+    string,
+    {
+      callCount: number;
+      totalResultTokens: number;
+      maxResultTokens: number;
+      contextGrowthAttributed: number;
+      calls: ToolImpactCall[];
+    }
+  >;
+  callMeta: Map<string, { toolName: string; call: ToolImpactCall }>;
+  pending: { toolName: string; call: ToolImpactCall }[];
+}): void {
+  const resultTokens = estimateTokensFromText(stringifyContent(opts.content));
+  const resultPreview = toolResultPreview(opts.content);
+  const meta = opts.callMeta.get(opts.toolUseId);
+  if (meta) {
+    // Prefer the richest preview if multiple result payloads arrive.
+    if (
+      !meta.call.resultPreview ||
+      (resultPreview &&
+        resultPreview.length > (meta.call.resultPreview?.length ?? 0))
+    ) {
+      meta.call.resultPreview = resultPreview;
+    }
+    meta.call.resultTokens = Math.max(meta.call.resultTokens, resultTokens);
+    meta.call.isError = meta.call.isError || opts.isError;
+    if (!meta.call.timestamp && opts.timestamp) {
+      meta.call.timestamp = opts.timestamp;
+    }
+    const row = opts.byTool.get(meta.toolName);
+    if (row) {
+      // Recompute totals from calls at the end; bump max here for streaming feel.
+      row.maxResultTokens = Math.max(row.maxResultTokens, meta.call.resultTokens);
+    }
+    if (!opts.pending.some((p) => p.call.toolUseId === meta.call.toolUseId)) {
+      opts.pending.push(meta);
+    }
+    return;
   }
+
+  const toolName = "unknown";
+  const row = ensureToolRow(opts.byTool, toolName);
+  row.callCount += 1;
+  const call: ToolImpactCall = {
+    toolUseId: opts.toolUseId,
+    timestamp: opts.timestamp,
+    inputPreview: null,
+    resultPreview,
+    resultTokens,
+    contextGrowthAttributed: 0,
+    isError: opts.isError,
+  };
+  row.calls.push(call);
+  opts.pending.push({ toolName, call });
 }
 
 async function readEntries(filePath: string): Promise<RawEntry[]> {
@@ -456,69 +554,90 @@ function buildToolImpact(
     if (entry.type === "user") {
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type !== "tool_result" || !block.tool_use_id) continue;
-        const resultTokens = estimateResultTokens(block);
-        const resultPreview = previewText(
-          stringifyContent(block.content),
-          220,
-        );
-        const meta = callMeta.get(block.tool_use_id);
-        if (meta) {
-          meta.call.resultTokens = resultTokens;
-          meta.call.resultPreview = resultPreview;
-          meta.call.isError = Boolean(block.is_error);
-          if (!meta.call.timestamp && entry.timestamp) {
-            meta.call.timestamp = entry.timestamp;
-          }
-          const row = byTool.get(meta.toolName);
-          if (row) {
-            row.totalResultTokens += resultTokens;
-            row.maxResultTokens = Math.max(row.maxResultTokens, resultTokens);
-          }
-          pending.push(meta);
-        } else {
-          const toolName = "unknown";
-          const row = ensureToolRow(byTool, toolName);
-          row.callCount += 1;
-          row.totalResultTokens += resultTokens;
-          row.maxResultTokens = Math.max(row.maxResultTokens, resultTokens);
-          const call: ToolImpactCall = {
-            toolUseId: block.tool_use_id,
-            timestamp: entry.timestamp ?? null,
-            inputPreview: null,
-            resultPreview,
-            resultTokens,
-            contextGrowthAttributed: 0,
-            isError: Boolean(block.is_error),
-          };
-          row.calls.push(call);
-          pending.push({ toolName, call });
-        }
+        applyToolResult({
+          toolUseId: block.tool_use_id,
+          content: block.content,
+          isError: Boolean(block.is_error),
+          timestamp: entry.timestamp ?? null,
+          byTool,
+          callMeta,
+          pending,
+        });
+      }
+      // Some Claude Code builds also stash the structured result on the entry.
+      const sourceId =
+        (typeof entry.sourceToolUseID === "string" && entry.sourceToolUseID) ||
+        (typeof (entry as { toolUseId?: unknown }).toolUseId === "string"
+          ? (entry as { toolUseId: string }).toolUseId
+          : null);
+      if (sourceId && entry.toolUseResult != null) {
+        applyToolResult({
+          toolUseId: sourceId,
+          content: entry.toolUseResult,
+          isError: false,
+          timestamp: entry.timestamp ?? null,
+          byTool,
+          callMeta,
+          pending,
+        });
+      }
+    }
+
+    // Older / alternate transcripts emit top-level tool_result rows.
+    if (entry.type === "tool_result") {
+      const toolUseId =
+        (typeof entry.tool_use_id === "string" && entry.tool_use_id) ||
+        (typeof (entry as { toolUseId?: unknown }).toolUseId === "string"
+          ? (entry as { toolUseId: string }).toolUseId
+          : null);
+      if (toolUseId) {
+        const content =
+          (entry as { content?: unknown }).content ??
+          entry.toolUseResult ??
+          (entry as { result?: unknown }).result;
+        applyToolResult({
+          toolUseId,
+          content,
+          isError: Boolean((entry as { is_error?: boolean }).is_error),
+          timestamp: entry.timestamp ?? null,
+          byTool,
+          callMeta,
+          pending,
+        });
       }
     }
   }
 
   return [...byTool.entries()]
-    .map(([toolName, row]) => ({
-      toolName,
-      callCount: row.callCount,
-      totalResultTokens: row.totalResultTokens,
-      avgResultTokens:
-        row.callCount > 0
-          ? Math.round(row.totalResultTokens / row.callCount)
-          : 0,
-      maxResultTokens: row.maxResultTokens,
-      contextGrowthAttributed: Math.round(row.contextGrowthAttributed),
-      calls: row.calls
-        .map((c) => ({
-          ...c,
-          contextGrowthAttributed: Math.round(c.contextGrowthAttributed),
-        }))
-        .sort(
-          (a, b) =>
-            b.contextGrowthAttributed - a.contextGrowthAttributed ||
-            b.resultTokens - a.resultTokens,
-        ),
-    }))
+    .map(([toolName, row]) => {
+      const totalResultTokens = row.calls.reduce(
+        (sum, call) => sum + call.resultTokens,
+        0,
+      );
+      const maxResultTokens = row.calls.reduce(
+        (max, call) => Math.max(max, call.resultTokens),
+        0,
+      );
+      return {
+        toolName,
+        callCount: row.callCount,
+        totalResultTokens,
+        avgResultTokens:
+          row.callCount > 0 ? Math.round(totalResultTokens / row.callCount) : 0,
+        maxResultTokens,
+        contextGrowthAttributed: Math.round(row.contextGrowthAttributed),
+        calls: row.calls
+          .map((c) => ({
+            ...c,
+            contextGrowthAttributed: Math.round(c.contextGrowthAttributed),
+          }))
+          .sort(
+            (a, b) =>
+              b.contextGrowthAttributed - a.contextGrowthAttributed ||
+              b.resultTokens - a.resultTokens,
+          ),
+      };
+    })
     .sort(
       (a, b) =>
         b.contextGrowthAttributed - a.contextGrowthAttributed ||
@@ -699,7 +818,9 @@ function buildAgentTreeFromEntries(
 
       for (const tool of tools) {
         toolCalls += 1;
-        const inputPreview = previewText(stringifyContent(tool.input), 160);
+        const summary = toolInputPreview(tool.name ?? "tool", tool.input);
+        const inputPreview =
+          summary ?? previewText(stringifyContent(tool.input), 160);
         const isSubagent =
           tool.name === "Task" ||
           tool.name === "Agent" ||
@@ -707,7 +828,9 @@ function buildAgentTreeFromEntries(
         const toolNode: TreeNode = {
           id: tool.id ?? `${assistantNode.id}-tool-${toolCalls}`,
           kind: "tool_call",
-          label: tool.name ?? "tool",
+          label: summary
+            ? `${tool.name ?? "tool"} · ${summary}`
+            : (tool.name ?? "tool"),
           timestamp: entry.timestamp ?? null,
           model: null,
           usage: null,
@@ -747,6 +870,46 @@ function buildAgentTreeFromEntries(
         preview: previewText(stringifyContent(entry.message?.content ?? entry), 160),
         children: [],
       });
+    }
+
+    if (entry.type === "tool_result") {
+      const toolUseId =
+        (typeof entry.tool_use_id === "string" && entry.tool_use_id) ||
+        (typeof (entry as { toolUseId?: unknown }).toolUseId === "string"
+          ? (entry as { toolUseId: string }).toolUseId
+          : null);
+      if (!toolUseId) continue;
+      const content =
+        (entry as { content?: unknown }).content ??
+        entry.toolUseResult ??
+        (entry as { result?: unknown }).result;
+      const parent = toolNodes.get(toolUseId);
+      const resultTokens = estimateTokensFromText(stringifyContent(content));
+      const node: TreeNode = {
+        id: `${entry.uuid ?? toolUseId}-result`,
+        kind: "tool_result",
+        label: (entry as { is_error?: boolean }).is_error
+          ? "Tool error"
+          : "Tool result",
+        timestamp: entry.timestamp ?? null,
+        model: null,
+        usage: null,
+        context: {
+          addedTokens: resultTokens,
+          contextAfter: null,
+          contextDelta: null,
+        },
+        preview: toolResultPreview(content),
+        toolUseId,
+        children: [],
+      };
+      if (parent) {
+        if (!parent.children.some((c) => c.kind === "tool_result")) {
+          parent.children.push(node);
+        }
+      } else {
+        root.children.push(node);
+      }
     }
   }
 

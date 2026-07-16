@@ -234,8 +234,8 @@ export function SessionDetailPage() {
               Tool impact on context
             </Typography>
             <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-              Tools ranked by attributed context growth. Click any tool to
-              inspect individual calls, inputs, and result sizes.
+              Tools ranked by attributed context growth. Each tool shows its
+              heaviest calls up front; expand for the full per-call list.
             </Typography>
             <ToolImpactList rows={detail.toolImpact} />
           </Paper>
