@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 import {
   Box,
@@ -14,6 +14,7 @@ import {
   contextSize,
 } from "@shared/types";
 import { api, formatDate } from "../lib/api";
+import { findAncestorIds } from "../lib/tree";
 import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
@@ -61,12 +62,14 @@ export function SessionDetailPage() {
   const { id } = useParams();
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setDetail(null);
     setError(null);
+    setFocusedNodeId(null);
     api<SessionDetail>(`/api/sessions/${id}`)
       .then((res) => {
         if (!cancelled) setDetail(res);
@@ -78,6 +81,13 @@ export function SessionDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  const forceOpenIds = useMemo(() => {
+    if (!detail || !focusedNodeId) return undefined;
+    const ancestors = findAncestorIds(detail.tree, focusedNodeId);
+    if (!ancestors) return undefined;
+    return new Set(ancestors);
+  }, [detail, focusedNodeId]);
 
   const backLink = (
     <Link
@@ -180,6 +190,28 @@ export function SessionDetailPage() {
         </Box>
       </Stack>
 
+      <Paper
+        sx={{
+          p: 2.5,
+          mb: 2,
+          animation: "rise 420ms ease both",
+        }}
+      >
+        <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
+          Context growth
+        </Typography>
+        <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
+          Context occupancy across assistant turns (
+          {formatTokens(contextSize(meta.usage))} cumulative input+cache). Click
+          a turn to jump the hierarchy to that moment.
+        </Typography>
+        <ContextChart
+          points={detail.timeline}
+          selectedNodeId={focusedNodeId}
+          onSelect={(point) => setFocusedNodeId(point.nodeId)}
+        />
+      </Paper>
+
       <Box
         sx={{
           display: "grid",
@@ -195,6 +227,9 @@ export function SessionDetailPage() {
           <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
             Root agent → tool calls → results / subagents. Token chips show
             usage; result nodes estimate how much each tool added to context.
+            {focusedNodeId
+              ? " Highlighted node matches the selected timeline turn."
+              : ""}
           </Typography>
           <Box
             sx={{
@@ -206,22 +241,16 @@ export function SessionDetailPage() {
               pr: 0.5,
             }}
           >
-            <HierarchyTree node={detail.tree} defaultOpen />
+            <HierarchyTree
+              node={detail.tree}
+              defaultOpen
+              focusedNodeId={focusedNodeId}
+              forceOpenIds={forceOpenIds}
+            />
           </Box>
         </Paper>
 
         <Stack spacing={2}>
-          <Paper sx={{ p: 2.5 }}>
-            <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
-              Context size over turns
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0, mb: 1.5 }}>
-              Each bar is an assistant turn&apos;s context occupancy (
-              {formatTokens(contextSize(meta.usage))} cumulative input+cache).
-            </Typography>
-            <ContextChart points={detail.timeline} />
-          </Paper>
-
           <Paper sx={{ p: 2.5 }}>
             <Typography variant="h2" sx={{ mb: 1.5, fontSize: "1.1rem" }}>
               Agents

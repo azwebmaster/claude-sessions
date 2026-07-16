@@ -47,6 +47,16 @@ describe("fixture session parse", () => {
 
     assert.equal(detail.tree.kind, "root_agent");
     assert.ok(detail.timeline.length >= 1);
+    assert.ok(detail.timeline.every((p) => typeof p.nodeId === "string" && p.nodeId.length > 0));
+    const timelineIds = new Set(detail.timeline.map((p) => p.nodeId));
+    const walk = (node: typeof detail.tree): string[] => [
+      node.id,
+      ...node.children.flatMap(walk),
+    ];
+    const treeIds = new Set(walk(detail.tree));
+    for (const id of timelineIds) {
+      assert.ok(treeIds.has(id), `timeline nodeId ${id} missing from hierarchy`);
+    }
     const readImpact = detail.toolImpact.find((t) => t.toolName === "Read");
     assert.ok(readImpact);
     assert.ok(readImpact.callCount >= 1);
