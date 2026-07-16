@@ -19,6 +19,7 @@ import { HierarchyTree } from "../components/HierarchyTree";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
+import { TurnDetailPanel } from "../components/TurnDetailPanel";
 
 const mono = '"IBM Plex Mono", ui-monospace, monospace';
 
@@ -72,7 +73,10 @@ export function SessionDetailPage() {
     setFocusedNodeId(null);
     api<SessionDetail>(`/api/sessions/${id}`)
       .then((res) => {
-        if (!cancelled) setDetail(res);
+        if (cancelled) return;
+        setDetail(res);
+        // Default to first assistant turn so occupancy breakdown is visible.
+        if (res.timeline[0]) setFocusedNodeId(res.timeline[0].nodeId);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
@@ -81,6 +85,20 @@ export function SessionDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  const focusedTurnIndex = useMemo(() => {
+    if (!detail || !focusedNodeId) return -1;
+    return detail.timeline.findIndex((p) => p.nodeId === focusedNodeId);
+  }, [detail, focusedNodeId]);
+
+  const focusedTurn =
+    detail && focusedTurnIndex >= 0
+      ? detail.timeline[focusedTurnIndex]
+      : null;
+  const previousTurn =
+    detail && focusedTurnIndex > 0
+      ? detail.timeline[focusedTurnIndex - 1]
+      : null;
 
   const forceOpenIds = useMemo(() => {
     if (!detail || !focusedNodeId) return undefined;
@@ -169,6 +187,32 @@ export function SessionDetailPage() {
             {" · "}
             {formatDate(meta.startedAt)} → {formatDate(meta.updatedAt)}
           </Typography>
+          <Typography
+            component="div"
+            color="text.secondary"
+            title={meta.filePath}
+            sx={{
+              mt: 0.75,
+              fontFamily: mono,
+              fontSize: "0.72rem",
+              lineHeight: 1.4,
+              wordBreak: "break-all",
+            }}
+          >
+            <Box
+              component="span"
+              sx={{
+                color: "text.disabled",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                fontSize: "0.65rem",
+                mr: 0.75,
+              }}
+            >
+              Log
+            </Box>
+            {meta.filePath}
+          </Typography>
         </Box>
         <Box
           sx={{
@@ -210,6 +254,7 @@ export function SessionDetailPage() {
           selectedNodeId={focusedNodeId}
           onSelect={(point) => setFocusedNodeId(point.nodeId)}
         />
+        <TurnDetailPanel point={focusedTurn} previous={previousTurn} />
       </Paper>
 
       <Box

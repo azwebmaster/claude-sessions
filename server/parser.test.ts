@@ -103,6 +103,10 @@ describe("fixture session parse", () => {
     );
     assert.ok(detail.agentBreakdown.some((a) => a.kind === "subagent"));
     assert.ok(contextSize(detail.meta.usage) > 0);
+    assert.ok(
+      detail.meta.filePath.includes("11111111-1111-1111-1111-111111111111.jsonl"),
+      "session detail should expose the full transcript log path",
+    );
 
     const assistants = detail.tree.children.filter(
       (n) => n.kind === "assistant_message" && n.usage,
