@@ -109,8 +109,6 @@ export function SessionListPage() {
               flex: "1 1 240px",
               minWidth: { xs: "100%", sm: 200 },
               maxWidth: 420,
-              bgcolor: "rgba(255, 255, 255, 0.7)",
-              borderRadius: 1.25,
             }}
           />
         </Stack>

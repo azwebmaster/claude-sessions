@@ -28,9 +28,10 @@ export function AgentBreakdown({ rows }: Props) {
             gap: 1,
             px: 1.25,
             py: 1,
-            borderRadius: 1.25,
-            bgcolor: "rgba(255, 255, 255, 0.55)",
-            border: "1px solid rgba(16, 32, 24, 0.06)",
+            borderRadius: 1,
+            bgcolor: "action.hover",
+            border: 1,
+            borderColor: "divider",
           }}
         >
           <Box>
