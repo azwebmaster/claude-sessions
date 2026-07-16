@@ -25,6 +25,7 @@ import {
   findToolCallNodeId,
 } from "../lib/tree";
 import { HierarchyTree } from "../components/HierarchyTree";
+import { HierarchyAgentMap } from "../components/HierarchyAgentMap";
 import { ContextChart } from "../components/ContextChart";
 import { ToolImpactList } from "../components/ToolImpactList";
 import { AgentBreakdown } from "../components/AgentBreakdown";
@@ -491,20 +492,58 @@ export function SessionDetailPage() {
       <TabPanel id="hierarchy" active={activeTab === "hierarchy"}>
         <SectionPaper
           title="Agent & tool hierarchy"
-          description={`Root agent → tool calls → results / subagents. Starts collapsed below level 1; use Expand all / Collapse all or the chevron on a node. Click a node to highlight it; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
+          description={`Root agent → tool calls → results / subagents. Starts collapsed below level 1; use Expand all / Collapse all or the chevron on a node. Use the agent map on the right for quick jumps. Click a node to highlight it; use View transcript line to open the JSONL source. Assistant chips show that turn's API usage and window occupancy (ctx) — usually mostly cache/input from the prompt, not a sum of child tools. Tool +N nest chips are estimated I/O sizes only.${focusedNodeId ? " Highlighted node matches the selected timeline turn, Agents row, or Tool impact call." : ""}`}
           sx={{ animation: motion.riseMedium }}
         >
-          <HierarchyTree
-            node={detail.tree}
-            focusedNodeId={focusedNodeId}
-            forceOpenIds={forceOpenIds}
-            onFocusNode={(nodeId) => {
-              setFocusedNodeId(nodeId);
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "minmax(0, 1fr)",
+                md: "minmax(0, 1fr) 11.5rem",
+              },
+              gap: { xs: 1.5, md: 2 },
+              alignItems: "start",
+              minWidth: 0,
             }}
-            onViewLog={(node) => {
-              if (node.log) openLogModal(node.log);
-            }}
-          />
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <HierarchyTree
+                node={detail.tree}
+                focusedNodeId={focusedNodeId}
+                forceOpenIds={forceOpenIds}
+                scrollFocusedIntoView={activeTab === "hierarchy"}
+                onFocusNode={(nodeId) => {
+                  setFocusedNodeId(nodeId);
+                }}
+                onViewLog={(node) => {
+                  if (node.log) openLogModal(node.log);
+                }}
+              />
+            </Box>
+            <Box
+              sx={{
+                order: { xs: -1, md: 0 },
+                position: { md: "sticky" },
+                top: { md: 12 },
+                alignSelf: "start",
+                minWidth: 0,
+                pl: { md: 1.5 },
+                borderLeft: { md: 1 },
+                borderColor: { md: "divider" },
+                pb: { xs: 0.5, md: 0 },
+                mb: { xs: 0.25, md: 0 },
+                borderBottom: { xs: 1, md: 0 },
+                borderBottomColor: { xs: "divider", md: "transparent" },
+              }}
+            >
+              <HierarchyAgentMap
+                rows={detail.agentBreakdown}
+                selectedAgentId={selectedAgentId}
+                onSelectAgent={(agentId) => setFocusedNodeId(agentId)}
+              />
+            </Box>
+          </Box>
         </SectionPaper>
       </TabPanel>
 
