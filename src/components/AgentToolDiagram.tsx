@@ -42,7 +42,7 @@ interface Props {
   onSelectTool?: (toolName: string, agentId?: string) => void;
 }
 
-interface DiagramLink {
+export interface DiagramLink {
   agentId: string;
   toolName: string;
   callCount: number;
@@ -53,7 +53,7 @@ interface Point {
   y: number;
 }
 
-interface LaidOutNode {
+export interface LaidOutNode {
   id: string;
   label: string;
   sublabel: string;
@@ -72,7 +72,7 @@ interface LaidOutNode {
 }
 
 /** Stable node id so the same tool name can appear once per agent. */
-function toolNodeId(agentId: string, toolName: string): string {
+export function toolNodeId(agentId: string, toolName: string): string {
   return `tool:${agentId}:${toolName}`;
 }
 
@@ -110,7 +110,7 @@ const TOOL_CALL_R_MAX = 48;
 const AGENT_R_MIN = TOKEN_R_MIN;
 const TOOL_R_MIN = TOOL_CALL_R_MIN;
 
-interface WorldMetrics {
+export interface WorldMetrics {
   width: number;
   height: number;
   subagentRing: number;
@@ -300,9 +300,10 @@ function separateOverlaps(
 /**
  * Auto-arrange layout: root agent at the world center, subagents on an inner
  * ring, tools on outer rings near the agents that call them. Extra rings are
- * used when the tool set is large.
+ * used when the tool set is large. Every agent and tool id receives a point so
+ * links never lack endpoints.
  */
-function arrangeRadialPositions(
+export function arrangeRadialPositions(
   agents: LaidOutNode[],
   tools: LaidOutNode[],
   world: WorldMetrics,
@@ -380,7 +381,262 @@ function arrangeRadialPositions(
   });
 
   separateOverlaps([...agents, ...tools], positions, world);
+
+  // Guarantee every node (and therefore every link endpoint) has a position.
+  // Ring slicing / empty worlds should already cover this; this is a safety net.
+  const cxFallback = world.width / 2;
+  const cyFallback = world.height / 2;
+  const outerRing =
+    world.toolRings[world.toolRings.length - 1] ?? world.subagentRing + 120;
+  [...agents, ...tools].forEach((node, i, all) => {
+    if (positions[node.id]) return;
+    const angle = -Math.PI / 2 + (i / Math.max(all.length, 1)) * Math.PI * 2;
+    const ring = node.kind === "tool" ? outerRing : world.subagentRing;
+    positions[node.id] = clampPoint(
+      node,
+      pointOnRing(cxFallback, cyFallback, ring, angle),
+      world,
+    );
+  });
+
   return positions;
+}
+
+export interface AgentToolDiagramModel {
+  links: DiagramLink[];
+  agentNodes: LaidOutNode[];
+  toolNodes: LaidOutNode[];
+  hiddenToolCount: number;
+  totalToolKinds: number;
+  totalCalls: number;
+  world: WorldMetrics;
+  layoutKey: string;
+}
+
+/**
+ * Build the bipartite agent↔tool graph. Every visible tool node has exactly one
+ * link back to its owning agent — tool uses are never shown without an edge.
+ */
+export function buildAgentToolDiagramModel(
+  rows: AgentBreakdownRow[],
+  toolContextByName: Map<string, number>,
+  showAllTools: boolean,
+  agentSizeMetric: AgentSizeMetric,
+): AgentToolDiagramModel {
+  // One link (and later one tool node) per agent↔tool pair — never share a
+  // tool node across agents that happen to call the same tool name.
+  const linkList: DiagramLink[] = [];
+  const callsByToolName = new Map<string, number>();
+  let calls = 0;
+  for (const row of rows) {
+    for (const tool of row.tools ?? []) {
+      if (tool.callCount <= 0) continue;
+      linkList.push({
+        agentId: row.agentId,
+        toolName: tool.toolName,
+        callCount: tool.callCount,
+      });
+      callsByToolName.set(
+        tool.toolName,
+        (callsByToolName.get(tool.toolName) ?? 0) + tool.callCount,
+      );
+      calls += tool.callCount;
+    }
+  }
+  const ranked = [...linkList].sort(
+    (a, b) =>
+      b.callCount - a.callCount ||
+      a.toolName.localeCompare(b.toolName) ||
+      a.agentId.localeCompare(b.agentId),
+  );
+  const canExpand = ranked.length > COLLAPSED_MAX_TOOLS;
+  // Prefer showing every agent↔tool use (and its link). Collapse is opt-in.
+  const visible =
+    showAllTools || !canExpand
+      ? ranked
+      : selectVisibleToolLinks(ranked, COLLAPSED_MAX_TOOLS);
+
+  const agentSizeValues = rows.map((r) =>
+    agentSizeMetric === "peakContext"
+      ? r.peakContextTokens
+      : totalTokens(r.usage),
+  );
+
+  // Attribute session-level tool impact proportionally by this agent's share
+  // of calls for that tool name (impact rows are not per-agent).
+  const attributedCtx = (link: DiagramLink) => {
+    const global = toolContextByName.get(link.toolName) ?? 0;
+    if (global <= 0) return 0;
+    const totalForName = callsByToolName.get(link.toolName) ?? 0;
+    if (totalForName <= 0) return 0;
+    return global * (link.callCount / totalForName);
+  };
+
+  const toolCtxValues = visible.map(attributedCtx);
+  // If no tool impact data, fall back to call volume so sizes still vary.
+  const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
+  const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
+  // One max across every token-labeled circle so radius tracks the number
+  // drawn inside — including when agents switch peak ctx ↔ total tokens.
+  const maxTokenLabel = Math.max(
+    ...agentSizeValues,
+    ...(useToolCallsFallback ? [] : toolCtxValues),
+    1,
+  );
+  // Slightly smaller ceiling when many tools share the canvas.
+  const tokenRMax =
+    visible.length > COLLAPSED_MAX_TOOLS ? TOKEN_R_MAX - 6 : TOKEN_R_MAX;
+
+  const agents: LaidOutNode[] = rows.map((row, i) => {
+    const sizeTokens = agentSizeValues[i] ?? 0;
+    const sizeWeight = sizeTokens / maxTokenLabel;
+    return {
+      id: row.agentId,
+      label: shortAgentLabel(row.label),
+      sublabel: formatTokens(sizeTokens),
+      kind: "agent" as const,
+      agentKind: row.kind,
+      sizeWeight,
+      radius: radiusForTokenValue(
+        sizeTokens,
+        maxTokenLabel,
+        TOKEN_R_MIN,
+        tokenRMax,
+      ),
+      sizeTokens,
+    };
+  });
+  const tools: LaidOutNode[] = visible.map((tool, i) => {
+    const ctx = toolCtxValues[i] ?? 0;
+    if (useToolCallsFallback) {
+      const sizeWeight = tool.callCount / maxToolCalls;
+      return {
+        id: toolNodeId(tool.agentId, tool.toolName),
+        label: tool.toolName,
+        toolName: tool.toolName,
+        ownerAgentId: tool.agentId,
+        sublabel: `${tool.callCount}×`,
+        kind: "tool" as const,
+        sizeWeight,
+        radius: radiusFromWeight(
+          sizeWeight,
+          TOOL_CALL_R_MIN,
+          TOOL_CALL_R_MAX,
+        ),
+        sizeTokens: ctx,
+      };
+    }
+    const sizeWeight = ctx / maxTokenLabel;
+    return {
+      id: toolNodeId(tool.agentId, tool.toolName),
+      label: tool.toolName,
+      toolName: tool.toolName,
+      ownerAgentId: tool.agentId,
+      sublabel: formatTokens(ctx),
+      kind: "tool" as const,
+      sizeWeight,
+      radius: radiusForTokenValue(ctx, maxTokenLabel, TOKEN_R_MIN, tokenRMax),
+      sizeTokens: ctx,
+    };
+  });
+
+  // Links are exactly the visible tool uses — 1:1 with tool nodes.
+  const links = visible.map((l) => ({
+    agentId: l.agentId,
+    toolName: l.toolName,
+    callCount: l.callCount,
+  }));
+
+  const metrics = worldMetrics(agents.length, tools.length);
+
+  return {
+    links,
+    agentNodes: agents,
+    toolNodes: tools,
+    hiddenToolCount: Math.max(0, ranked.length - visible.length),
+    totalToolKinds: ranked.length,
+    totalCalls: calls,
+    world: metrics,
+    layoutKey: [
+      showAllTools ? "all" : "top",
+      ...agents.map((a) => a.id),
+      ...tools.map((t) => t.id),
+    ].join("|"),
+  };
+}
+
+/**
+ * Collapsed selection: keep the highest-volume pairs, but also keep at least
+ * one tool use (link) for every agent that called tools so no caller is left
+ * without an edge in the diagram.
+ */
+export function selectVisibleToolLinks(
+  ranked: DiagramLink[],
+  maxTools: number,
+): DiagramLink[] {
+  if (ranked.length <= maxTools) return ranked;
+
+  const selected: DiagramLink[] = [];
+  const selectedIds = new Set<string>();
+  const agentsWithTools = new Set(ranked.map((l) => l.agentId));
+  const agentsCovered = new Set<string>();
+
+  const push = (link: DiagramLink) => {
+    const id = toolNodeId(link.agentId, link.toolName);
+    if (selectedIds.has(id)) return;
+    selectedIds.add(id);
+    selected.push(link);
+    agentsCovered.add(link.agentId);
+  };
+
+  // First pass: top volume pairs.
+  for (const link of ranked) {
+    if (selected.length >= maxTools) break;
+    push(link);
+  }
+
+  // Second pass: ensure every agent with tool uses keeps at least one link.
+  if (agentsCovered.size < agentsWithTools.size) {
+    for (const link of ranked) {
+      if (agentsCovered.has(link.agentId)) continue;
+      push(link);
+    }
+    // If coverage pushed us over the cap, drop lowest-volume extras that are
+    // not an agent's sole remaining link.
+    if (selected.length > maxTools) {
+      const soleByAgent = new Map<string, string>();
+      const counts = new Map<string, number>();
+      for (const link of selected) {
+        counts.set(link.agentId, (counts.get(link.agentId) ?? 0) + 1);
+      }
+      for (const link of selected) {
+        if (counts.get(link.agentId) === 1) {
+          soleByAgent.set(link.agentId, toolNodeId(link.agentId, link.toolName));
+        }
+      }
+      const droppable = [...selected]
+        .reverse()
+        .filter(
+          (l) =>
+            soleByAgent.get(l.agentId) !== toolNodeId(l.agentId, l.toolName),
+        );
+      while (selected.length > maxTools && droppable.length > 0) {
+        const drop = droppable.shift()!;
+        const id = toolNodeId(drop.agentId, drop.toolName);
+        const idx = selected.findIndex(
+          (l) => toolNodeId(l.agentId, l.toolName) === id,
+        );
+        if (idx >= 0) selected.splice(idx, 1);
+      }
+    }
+  }
+
+  return selected.sort(
+    (a, b) =>
+      b.callCount - a.callCount ||
+      a.toolName.localeCompare(b.toolName) ||
+      a.agentId.localeCompare(b.agentId),
+  );
 }
 
 function zoomAt(
@@ -439,7 +695,8 @@ export function AgentToolDiagram({
   const dragRef = useRef<DragMode | null>(null);
   const movedRef = useRef(false);
 
-  const [showAllTools, setShowAllTools] = useState(false);
+  // Show every agent↔tool use (with its link) by default; Top tools is opt-in.
+  const [showAllTools, setShowAllTools] = useState(true);
   const [agentSizeMetric, setAgentSizeMetric] =
     useState<AgentSizeMetric>("peakContext");
 
@@ -463,159 +720,35 @@ export function AgentToolDiagram({
     totalCalls,
     world,
     layoutKey,
-  } = useMemo(() => {
-    // One link (and later one tool node) per agent↔tool pair — never share a
-    // tool node across agents that happen to call the same tool name.
-    const linkList: DiagramLink[] = [];
-    const callsByToolName = new Map<string, number>();
-    let calls = 0;
-    for (const row of rows) {
-      for (const tool of row.tools ?? []) {
-        linkList.push({
-          agentId: row.agentId,
-          toolName: tool.toolName,
-          callCount: tool.callCount,
-        });
-        callsByToolName.set(
-          tool.toolName,
-          (callsByToolName.get(tool.toolName) ?? 0) + tool.callCount,
-        );
-        calls += tool.callCount;
-      }
-    }
-    const ranked = [...linkList].sort(
-      (a, b) =>
-        b.callCount - a.callCount ||
-        a.toolName.localeCompare(b.toolName) ||
-        a.agentId.localeCompare(b.agentId),
-    );
-    const canExpand = ranked.length > COLLAPSED_MAX_TOOLS;
-    const visible =
-      showAllTools || !canExpand
-        ? ranked
-        : ranked.slice(0, COLLAPSED_MAX_TOOLS);
-    const visibleIds = new Set(
-      visible.map((t) => toolNodeId(t.agentId, t.toolName)),
-    );
-
-    const agentSizeValues = rows.map((r) =>
-      agentSizeMetric === "peakContext"
-        ? r.peakContextTokens
-        : totalTokens(r.usage),
-    );
-
-    // Attribute session-level tool impact proportionally by this agent's share
-    // of calls for that tool name (impact rows are not per-agent).
-    const attributedCtx = (link: DiagramLink) => {
-      const global = toolContextByName.get(link.toolName) ?? 0;
-      if (global <= 0) return 0;
-      const totalForName = callsByToolName.get(link.toolName) ?? 0;
-      if (totalForName <= 0) return 0;
-      return global * (link.callCount / totalForName);
-    };
-
-    const toolCtxValues = visible.map(attributedCtx);
-    // If no tool impact data, fall back to call volume so sizes still vary.
-    const useToolCallsFallback = toolCtxValues.every((v) => v === 0);
-    const maxToolCalls = Math.max(...visible.map((t) => t.callCount), 1);
-    // One max across every token-labeled circle so radius tracks the number
-    // drawn inside — including when agents switch peak ctx ↔ total tokens.
-    const maxTokenLabel = Math.max(
-      ...agentSizeValues,
-      ...(useToolCallsFallback ? [] : toolCtxValues),
-      1,
-    );
-    // Slightly smaller ceiling when many tools share the canvas.
-    const tokenRMax =
-      visible.length > COLLAPSED_MAX_TOOLS ? TOKEN_R_MAX - 6 : TOKEN_R_MAX;
-
-    const agents: LaidOutNode[] = rows.map((row, i) => {
-      const sizeTokens = agentSizeValues[i] ?? 0;
-      const sizeWeight = sizeTokens / maxTokenLabel;
-      return {
-        id: row.agentId,
-        label: shortAgentLabel(row.label),
-        sublabel: formatTokens(sizeTokens),
-        kind: "agent" as const,
-        agentKind: row.kind,
-        sizeWeight,
-        radius: radiusForTokenValue(
-          sizeTokens,
-          maxTokenLabel,
-          TOKEN_R_MIN,
-          tokenRMax,
-        ),
-        sizeTokens,
-      };
-    });
-    const tools: LaidOutNode[] = visible.map((tool, i) => {
-      const ctx = toolCtxValues[i] ?? 0;
-      if (useToolCallsFallback) {
-        const sizeWeight = tool.callCount / maxToolCalls;
-        return {
-          id: toolNodeId(tool.agentId, tool.toolName),
-          label: tool.toolName,
-          toolName: tool.toolName,
-          ownerAgentId: tool.agentId,
-          sublabel: `${tool.callCount}×`,
-          kind: "tool" as const,
-          sizeWeight,
-          radius: radiusFromWeight(
-            sizeWeight,
-            TOOL_CALL_R_MIN,
-            TOOL_CALL_R_MAX,
-          ),
-          sizeTokens: ctx,
-        };
-      }
-      const sizeWeight = ctx / maxTokenLabel;
-      return {
-        id: toolNodeId(tool.agentId, tool.toolName),
-        label: tool.toolName,
-        toolName: tool.toolName,
-        ownerAgentId: tool.agentId,
-        sublabel: formatTokens(ctx),
-        kind: "tool" as const,
-        sizeWeight,
-        radius: radiusForTokenValue(ctx, maxTokenLabel, TOKEN_R_MIN, tokenRMax),
-        sizeTokens: ctx,
-      };
-    });
-
-    const metrics = worldMetrics(agents.length, tools.length);
-
-    return {
-      links: linkList.filter((l) =>
-        visibleIds.has(toolNodeId(l.agentId, l.toolName)),
+  } = useMemo(
+    () =>
+      buildAgentToolDiagramModel(
+        rows,
+        toolContextByName,
+        showAllTools,
+        agentSizeMetric,
       ),
-      agentNodes: agents,
-      toolNodes: tools,
-      hiddenToolCount: Math.max(0, ranked.length - visible.length),
-      totalToolKinds: ranked.length,
-      totalCalls: calls,
-      world: metrics,
-      layoutKey: [
-        showAllTools ? "all" : "top",
-        ...agents.map((a) => a.id),
-        ...tools.map((t) => t.id),
-      ].join("|"),
-    };
-  }, [rows, toolContextByName, showAllTools, agentSizeMetric]);
-
-  const [positions, setPositions] = useState<Record<string, Point>>(() =>
-    arrangeRadialPositions(agentNodes, toolNodes, world, links),
+    [rows, toolContextByName, showAllTools, agentSizeMetric],
   );
+
+  const arrangedPositions = useMemo(
+    () => arrangeRadialPositions(agentNodes, toolNodes, world, links),
+    [agentNodes, toolNodes, world, links],
+  );
+
+  const [positions, setPositions] =
+    useState<Record<string, Point>>(arrangedPositions);
   const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
-  const layoutKeyRef = useRef(layoutKey);
+  const [positionsLayoutKey, setPositionsLayoutKey] = useState(layoutKey);
   const worldRef = useRef(world);
   worldRef.current = world;
 
-  // Re-layout when the agent/tool set or expand mode changes.
-  useEffect(() => {
-    if (layoutKeyRef.current === layoutKey) return;
-    layoutKeyRef.current = layoutKey;
-    setPositions(arrangeRadialPositions(agentNodes, toolNodes, world, links));
-  }, [layoutKey, agentNodes, toolNodes, world, links]);
+  // Keep link endpoints in sync with the visible tool set on the same render
+  // (avoid a frame where new tool nodes exist without edges).
+  if (positionsLayoutKey !== layoutKey) {
+    setPositionsLayoutKey(layoutKey);
+    setPositions(arrangedPositions);
+  }
 
   // Fit the world into the viewport when the graph membership changes.
   useEffect(() => {
@@ -820,7 +953,7 @@ export function AgentToolDiagram({
   };
 
   const renderNode = (node: LaidOutNode) => {
-    const pos = positions[node.id];
+    const pos = positions[node.id] ?? arrangedPositions[node.id];
     if (!pos) return null;
     const selected =
       node.kind === "agent"
@@ -841,6 +974,8 @@ export function AgentToolDiagram({
         : selectedAgentId != null &&
           selectedToolName == null &&
           node.ownerAgentId === selectedAgentId);
+    // Hide unrelated tool nodes while focused so they don't float without edges.
+    if (dimInactive && !related && node.kind === "tool") return null;
     const faded = dimInactive && !related;
     const chip =
       node.kind === "tool"
@@ -1192,17 +1327,17 @@ export function AgentToolDiagram({
 
               {links.map((link) => {
                 const toolId = toolNodeId(link.agentId, link.toolName);
-                const from = positions[link.agentId];
-                const to = positions[toolId];
+                const from =
+                  positions[link.agentId] ?? arrangedPositions[link.agentId];
+                const to = positions[toolId] ?? arrangedPositions[toolId];
                 if (!from || !to) return null;
                 const active = linkActive(link);
+                // Match tool-node focus behavior: inactive edges are omitted so
+                // every visible tool use still reads as linked to its agent.
+                if (dimInactive && !active) return null;
                 const weight = link.callCount / maxLink;
                 const strokeW = 1.25 + weight * 5;
-                const opacity = dimInactive
-                  ? active
-                    ? 0.95
-                    : 0.08
-                  : 0.22 + weight * 0.55;
+                const opacity = 0.35 + weight * 0.55;
                 const dx = to.x - from.x;
                 const dy = to.y - from.y;
                 const dist = Math.hypot(dx, dy) || 1;
@@ -1230,11 +1365,7 @@ export function AgentToolDiagram({
                       strokeWidth={strokeW}
                       strokeOpacity={opacity}
                       strokeLinecap="round"
-                      markerEnd={
-                        dimInactive && !active
-                          ? undefined
-                          : `url(#arrow-${gradId})`
-                      }
+                      markerEnd={`url(#arrow-${gradId})`}
                       style={{
                         transition:
                           "stroke-opacity 160ms ease, stroke-width 160ms ease",
@@ -1276,11 +1407,11 @@ export function AgentToolDiagram({
         >
           {pluralize(rows.length, "agent")} · {pluralize(totalCalls, "tool call")}
           {showAllTools
-            ? ` · all ${totalToolKinds} tools`
+            ? ` · all ${totalToolKinds} tools linked`
             : hiddenToolCount > 0
-              ? ` · top ${COLLAPSED_MAX_TOOLS} tools (+${hiddenToolCount} more)`
+              ? ` · ${pluralize(totalToolKinds - hiddenToolCount, "tool")} linked (+${hiddenToolCount} hidden)`
               : totalToolKinds > 0
-                ? ` · ${pluralize(totalToolKinds, "tool")}`
+                ? ` · ${pluralize(totalToolKinds, "tool")} linked`
                 : ""}
           {" · "}circle size ∝ number shown
           {" · "}agent label = {agentSizeCaption}
@@ -1303,7 +1434,7 @@ export function AgentToolDiagram({
               minWidth: 0,
             }}
           >
-            Expand diagram (+{hiddenToolCount} tools)
+            Show all tool links (+{hiddenToolCount})
           </Button>
         ) : null}
       </Stack>
