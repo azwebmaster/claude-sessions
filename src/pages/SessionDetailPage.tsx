@@ -475,7 +475,7 @@ export function SessionDetailPage() {
       <TabPanel id="diagram" active={activeTab === "diagram"}>
         <SectionPaper
           title="Agent ↔ tool calls"
-          description="Who called what: root agent at the center. Each tool node is scoped to the agent that called it (shared tool names are not merged across agents). Toggle agent labels between peak context and total tokens; circle size always tracks the number shown (agents and tools share one scale). Tool labels use attributed growth. Link thickness scales with call volume. Dense sessions start with the top agent↔tool pairs; expand to show every tool on extra rings. Drag nodes to rearrange, use Arrange to auto-layout (tools cluster near their callers), scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
+          description="Who called what: root agent at the center. Each tool use is shown as an agent-scoped node with a link back to its caller (shared tool names are not merged across agents). Toggle agent labels between peak context and total tokens; circle size always tracks the number shown (agents and tools share one scale). Tool labels use attributed growth. Link thickness scales with call volume. All tool uses are linked by default; optionally collapse to top pairs (still keeping at least one link per agent). Drag nodes to rearrange, use Arrange to auto-layout (tools cluster near their callers), scroll or use +/− to zoom, and click an agent, tool, or link to highlight the matching hierarchy node."
           sx={{ animation: motion.riseMedium }}
         >
           <AgentToolDiagram
