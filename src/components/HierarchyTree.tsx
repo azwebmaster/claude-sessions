@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import { Box, Button, Chip, Collapse, Stack, Typography } from "@mui/material";
 import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
 import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
@@ -10,7 +10,12 @@ import {
   collectExpandableIds,
   collectExpandableIdsBelowDepth,
 } from "../lib/tree";
-import { focusHighlight, nodeKindStyle } from "../theme";
+import {
+  focusHighlight,
+  nodeKindStyle,
+  schemeAlpha,
+  schemePalette,
+} from "../theme";
 import { ExpandableRow } from "./ui";
 
 /** Open only the root by default (collapse everything below level 1). */
@@ -128,7 +133,7 @@ function HierarchyTreeNode({
         "&:hover": {
           borderColor: isFocused ? highlight.borderColor : "divider",
           bgcolor: isFocused
-            ? alpha(theme.palette.warning.main, 0.14)
+            ? schemeAlpha(theme, schemePalette(theme).warning.main, 0.14)
             : "action.hover",
         },
       }}

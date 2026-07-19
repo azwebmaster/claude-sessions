@@ -2,7 +2,7 @@ import { Box, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import type { ContextTimelinePoint } from "@shared/types";
 import { formatTokens } from "@shared/types";
-import { chartBarColors } from "../theme";
+import { chartBarColors, schemePalette } from "../theme";
 import { EmptyState } from "./ui";
 
 interface Props {
@@ -97,7 +97,7 @@ export function ContextChart({ points, selectedNodeId, onSelect }: Props) {
                   borderRadius: "6px 6px 2px 2px",
                   background: `linear-gradient(180deg, ${top}, ${bottom})`,
                   outline: selected
-                    ? `2px solid ${theme.palette.warning.main}`
+                    ? `2px solid ${schemePalette(theme).warning.main}`
                     : "2px solid transparent",
                   outlineOffset: 2,
                   position: "relative",

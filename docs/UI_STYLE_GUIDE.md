@@ -41,12 +41,17 @@ Use `useTheme()` and token helpers — not inline hex — for chart and chip col
 
 ```tsx
 import { useTheme } from "@mui/material/styles";
-import { chartBarColors, nodeKindStyle } from "../theme";
+import { chartBarColors, nodeKindStyle, schemePalette, schemeAlpha } from "../theme";
 
 const theme = useTheme();
 const bars = chartBarColors(theme);
 const chip = nodeKindStyle(theme, node.kind);
+// For ad-hoc paints outside helpers, use scheme-aware accessors:
+const warning = schemePalette(theme).warning.main;
+const tint = schemeAlpha(theme, warning, 0.12);
 ```
+
+With `cssVariables` enabled, `theme.palette.*` stays on the default (light) hex values when the mode toggles. Prefer `schemePalette` / `schemeAlpha` (or `theme.vars.palette` / `theme.alpha`) so charts, SVG, and chip tints follow dark mode.
 
 ## Typography
 
@@ -123,6 +128,8 @@ Always prefer these over ad-hoc `Paper` + `Typography` combinations.
 
 | Helper | Purpose |
 | --- | --- |
+| `schemePalette(theme)` | Active-scheme palette (`theme.vars.palette` when CSS vars are on) |
+| `schemeAlpha(theme, color, opacity)` | Scheme-aware translucent color (`theme.alpha`) |
 | `chartBarColors(theme)` | Timeline bar gradients and focus ring |
 | `usagePartColors(theme)` | Turn detail composition segments |
 | `contextItemKindStyle(theme, kind)` | Loaded-context category chips (MCP, skill, instruction, …) |
