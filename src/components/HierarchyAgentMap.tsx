@@ -1,8 +1,13 @@
 import { Box, Typography } from "@mui/material";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import type { AgentBreakdownRow } from "@shared/types";
 import { formatTokens } from "@shared/types";
-import { focusHighlight, nodeKindStyle } from "../theme";
+import {
+  focusHighlight,
+  nodeKindStyle,
+  schemeAlpha,
+  schemePalette,
+} from "../theme";
 import { EmptyState } from "./ui";
 
 interface Props {
@@ -157,13 +162,17 @@ export function HierarchyAgentMap({
                           ? highlight.borderColor
                           : "text.secondary",
                         bgcolor: selected
-                          ? alpha(theme.palette.warning.main, 0.14)
+                          ? schemeAlpha(
+                              theme,
+                              schemePalette(theme).warning.main,
+                              0.14,
+                            )
                           : "action.selected",
                       }
                     : undefined,
                   "&:focus-visible": selectable
                     ? {
-                        outline: `2px solid ${theme.palette.warning.main}`,
+                        outline: `2px solid ${schemePalette(theme).warning.main}`,
                         outlineOffset: 2,
                       }
                     : undefined,

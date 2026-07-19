@@ -1,4 +1,4 @@
-import { alpha, type Theme } from "@mui/material/styles";
+import { type Theme } from "@mui/material/styles";
 import type { LoadedContextKind, TreeNodeKind } from "@shared/types";
 
 /** IBM Plex Mono stack loaded in index.html. */
@@ -30,6 +30,21 @@ export const keyframes = {
   },
 } as const;
 
+/**
+ * Palette that tracks the active color scheme.
+ * With `cssVariables`, `theme.palette` stays on the default (light) hex values
+ * across mode toggles — use this (or `theme.vars.palette`) for paints that must
+ * follow light/dark.
+ */
+export function schemePalette(theme: Theme) {
+  return theme.vars?.palette ?? theme.palette;
+}
+
+/** Scheme-aware translucent color (`theme.alpha` understands CSS variables). */
+export function schemeAlpha(theme: Theme, color: string, opacity: number) {
+  return theme.alpha(color, opacity);
+}
+
 export interface ChartBarColors {
   selected: [string, string];
   grown: [string, string];
@@ -38,11 +53,12 @@ export interface ChartBarColors {
 }
 
 export function chartBarColors(theme: Theme): ChartBarColors {
+  const palette = schemePalette(theme);
   return {
-    selected: [theme.palette.warning.light, theme.palette.warning.main],
-    grown: [theme.palette.info.light, theme.palette.primary.main],
-    stable: [theme.palette.info.light, theme.palette.primary.light],
-    focusOutline: theme.palette.primary.main,
+    selected: [palette.warning.light, palette.warning.main],
+    grown: [palette.info.light, palette.primary.main],
+    stable: [palette.info.light, palette.primary.light],
+    focusOutline: palette.primary.main,
   };
 }
 
@@ -54,11 +70,12 @@ export interface UsagePartColors {
 }
 
 export function usagePartColors(theme: Theme): UsagePartColors {
+  const palette = schemePalette(theme);
   return {
-    input: theme.palette.primary.main,
-    cacheWrite: theme.palette.success.main,
-    cacheRead: theme.palette.secondary.main,
-    output: theme.palette.warning.main,
+    input: palette.primary.main,
+    cacheWrite: palette.success.main,
+    cacheRead: palette.secondary.main,
+    output: palette.warning.main,
   };
 }
 
@@ -71,58 +88,59 @@ export function contextItemKindStyle(
   theme: Theme,
   kind: LoadedContextKind,
 ): KindChipStyle {
+  const palette = schemePalette(theme);
   const styles: Record<LoadedContextKind, KindChipStyle> = {
     system_prompt: {
-      bg: alpha(theme.palette.text.primary, 0.08),
-      color: theme.palette.text.primary,
+      bg: schemeAlpha(theme, palette.text.primary, 0.08),
+      color: palette.text.primary,
     },
     instruction: {
-      bg: alpha(theme.palette.primary.main, 0.12),
-      color: theme.palette.primary.dark,
+      bg: schemeAlpha(theme, palette.primary.main, 0.12),
+      color: palette.primary.dark,
     },
     memory: {
-      bg: alpha(theme.palette.info.main, 0.12),
-      color: theme.palette.info.dark,
+      bg: schemeAlpha(theme, palette.info.main, 0.12),
+      color: palette.info.dark,
     },
     mcp: {
-      bg: alpha(theme.palette.secondary.main, 0.14),
-      color: theme.palette.secondary.dark,
+      bg: schemeAlpha(theme, palette.secondary.main, 0.14),
+      color: palette.secondary.dark,
     },
     skill: {
-      bg: alpha(theme.palette.success.main, 0.14),
-      color: theme.palette.success.dark,
+      bg: schemeAlpha(theme, palette.success.main, 0.14),
+      color: palette.success.dark,
     },
     deferred_tools: {
-      bg: alpha(theme.palette.warning.main, 0.12),
-      color: theme.palette.warning.dark,
+      bg: schemeAlpha(theme, palette.warning.main, 0.12),
+      color: palette.warning.dark,
     },
     tool_schema: {
-      bg: alpha(theme.palette.warning.main, 0.1),
-      color: theme.palette.warning.main,
+      bg: schemeAlpha(theme, palette.warning.main, 0.1),
+      color: palette.warning.main,
     },
     user_message: {
-      bg: alpha(theme.palette.primary.main, 0.08),
-      color: theme.palette.primary.main,
+      bg: schemeAlpha(theme, palette.primary.main, 0.08),
+      color: palette.primary.main,
     },
     assistant_message: {
-      bg: alpha(theme.palette.info.main, 0.1),
-      color: theme.palette.info.main,
+      bg: schemeAlpha(theme, palette.info.main, 0.1),
+      color: palette.info.main,
     },
     file: {
-      bg: alpha(theme.palette.success.main, 0.1),
-      color: theme.palette.success.main,
+      bg: schemeAlpha(theme, palette.success.main, 0.1),
+      color: palette.success.main,
     },
     tool_result: {
-      bg: alpha(theme.palette.error.main, 0.08),
-      color: theme.palette.error.dark,
+      bg: schemeAlpha(theme, palette.error.main, 0.08),
+      color: palette.error.dark,
     },
     attachment: {
-      bg: alpha(theme.palette.text.primary, 0.06),
-      color: theme.palette.text.secondary,
+      bg: schemeAlpha(theme, palette.text.primary, 0.06),
+      color: palette.text.secondary,
     },
     other: {
-      bg: alpha(theme.palette.text.primary, 0.06),
-      color: theme.palette.text.secondary,
+      bg: schemeAlpha(theme, palette.text.primary, 0.06),
+      color: palette.text.secondary,
     },
   };
 
@@ -133,31 +151,32 @@ export function nodeKindStyle(
   theme: Theme,
   kind: TreeNodeKind,
 ): KindChipStyle {
+  const palette = schemePalette(theme);
   const neutral = {
-    bg: alpha(theme.palette.text.primary, 0.06),
-    color: theme.palette.text.secondary,
+    bg: schemeAlpha(theme, palette.text.primary, 0.06),
+    color: palette.text.secondary,
   };
 
   const styles: Record<TreeNodeKind, KindChipStyle> = {
     root_agent: {
-      bg: alpha(theme.palette.primary.main, 0.12),
-      color: theme.palette.primary.dark,
+      bg: schemeAlpha(theme, palette.primary.main, 0.12),
+      color: palette.primary.dark,
     },
     subagent: {
-      bg: alpha(theme.palette.secondary.main, 0.12),
-      color: theme.palette.secondary.dark,
+      bg: schemeAlpha(theme, palette.secondary.main, 0.12),
+      color: palette.secondary.dark,
     },
     tool_call: {
-      bg: alpha(theme.palette.info.main, 0.12),
-      color: theme.palette.info.dark,
+      bg: schemeAlpha(theme, palette.info.main, 0.12),
+      color: palette.info.dark,
     },
     tool_result: {
-      bg: alpha(theme.palette.warning.main, 0.12),
-      color: theme.palette.warning.dark,
+      bg: schemeAlpha(theme, palette.warning.main, 0.12),
+      color: palette.warning.dark,
     },
     assistant_message: {
-      bg: alpha(theme.palette.primary.main, 0.12),
-      color: theme.palette.primary.main,
+      bg: schemeAlpha(theme, palette.primary.main, 0.12),
+      color: palette.primary.main,
     },
     user_message: neutral,
     thinking: neutral,
@@ -168,17 +187,18 @@ export function nodeKindStyle(
 }
 
 export function focusHighlight(theme: Theme) {
+  const palette = schemePalette(theme);
   return {
-    borderColor: theme.palette.warning.main,
-    bgcolor: alpha(theme.palette.warning.main, 0.12),
-    boxShadow: `inset 3px 0 0 ${theme.palette.warning.main}`,
+    borderColor: palette.warning.main,
+    bgcolor: schemeAlpha(theme, palette.warning.main, 0.12),
+    boxShadow: `inset 3px 0 0 ${palette.warning.main}`,
   };
 }
 
 export function alertSurface(theme: Theme, color: "error" | "warning" | "info") {
-  const main = theme.palette[color].main;
+  const main = schemePalette(theme)[color].main;
   return {
-    bgcolor: alpha(main, 0.06),
-    borderColor: alpha(main, 0.18),
+    bgcolor: schemeAlpha(theme, main, 0.06),
+    borderColor: schemeAlpha(theme, main, 0.18),
   };
 }

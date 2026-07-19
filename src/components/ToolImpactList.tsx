@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import {
   Box,
   Chip,
@@ -11,7 +11,12 @@ import {
 import type { ToolImpactCall, ToolImpactRow } from "@shared/types";
 import { formatTokens } from "@shared/types";
 import { formatDate, shortId } from "../lib/api";
-import { alertSurface, focusHighlight } from "../theme";
+import {
+  alertSurface,
+  focusHighlight,
+  schemeAlpha,
+  schemePalette,
+} from "../theme";
 import { EmptyState, ExpandableRow } from "./ui";
 
 interface Props {
@@ -88,13 +93,13 @@ function CallDetail({
                 ? highlight.borderColor
                 : "text.secondary",
               bgcolor: selected
-                ? alpha(theme.palette.warning.main, 0.14)
+                ? schemeAlpha(theme, schemePalette(theme).warning.main, 0.14)
                 : "action.hover",
             }
           : undefined,
         "&:focus-visible": selectable
           ? {
-              outline: `2px solid ${theme.palette.warning.main}`,
+              outline: `2px solid ${schemePalette(theme).warning.main}`,
               outlineOffset: 2,
             }
           : undefined,
@@ -296,7 +301,7 @@ export function ToolImpactList({
               bgcolor: open
                 ? "action.selected"
                 : isTop
-                  ? alpha(theme.palette.error.main, 0.04)
+                  ? schemeAlpha(theme, schemePalette(theme).error.main, 0.04)
                   : "action.hover",
               transition: "border-color 150ms ease, background 150ms ease",
             }}
@@ -318,9 +323,9 @@ export function ToolImpactList({
                     fontFamily: theme.typography.mono?.fontFamily,
                     fontSize: "0.68rem",
                     bgcolor: isTop
-                      ? alpha(theme.palette.error.main, 0.12)
+                      ? schemeAlpha(theme, schemePalette(theme).error.main, 0.12)
                       : "action.selected",
-                    color: isTop ? "error.dark" : "text.secondary",
+                    color: isTop ? "error.main" : "text.secondary",
                     borderRadius: 0.75,
                     "& .MuiChip-label": { px: 0.75 },
                   }}

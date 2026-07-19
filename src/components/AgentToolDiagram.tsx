@@ -23,10 +23,16 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import type { AgentBreakdownRow, ToolImpactRow } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
-import { focusHighlight, motion, nodeKindStyle } from "../theme";
+import {
+  focusHighlight,
+  motion,
+  nodeKindStyle,
+  schemeAlpha,
+  schemePalette,
+} from "../theme";
 import { EmptyState } from "./ui";
 
 /** How agent circle radii are derived. Tools stay on attributed growth. */
@@ -1027,23 +1033,23 @@ export function AgentToolDiagram({
           fill={
             selected
               ? highlight.bgcolor
-              : alpha(theme.palette.background.paper, 0.96)
+              : schemeAlpha(theme, schemePalette(theme).background.paper, 0.96)
           }
           stroke={selected ? highlight.borderColor : chip.color}
           strokeWidth={selected ? 2.5 : 2}
-          filter={`drop-shadow(0 1px 3px ${alpha(theme.palette.common.black, 0.14)})`}
+          filter={`drop-shadow(0 1px 3px ${schemeAlpha(theme, schemePalette(theme).common.black, 0.14)})`}
           style={{ transition: "r 180ms ease" }}
         />
         <circle
           r={r}
-          fill={alpha(chip.color, selected ? 0.22 : 0.12)}
+          fill={schemeAlpha(theme, chip.color, selected ? 0.22 : 0.12)}
           stroke="none"
           style={{ pointerEvents: "none", transition: "r 180ms ease" }}
         />
         <text
           textAnchor="middle"
           y={-2}
-          fill={theme.palette.text.primary}
+          fill={schemePalette(theme).text.primary}
           fontSize={r >= 40 ? 12 : 10}
           fontWeight={600}
           fontFamily={
@@ -1058,7 +1064,7 @@ export function AgentToolDiagram({
         <text
           textAnchor="middle"
           y={r >= 36 ? 14 : 12}
-          fill={theme.palette.text.secondary}
+          fill={schemePalette(theme).text.secondary}
           fontSize={10}
           fontFamily={theme.typography.mono?.fontFamily}
           style={{ pointerEvents: "none" }}
@@ -1077,7 +1083,7 @@ export function AgentToolDiagram({
           border: 1,
           borderColor: "divider",
           borderRadius: 1.5,
-          bgcolor: alpha(theme.palette.text.primary, 0.02),
+          bgcolor: schemeAlpha(theme, schemePalette(theme).text.primary, 0.02),
           overflow: "hidden",
         }}
       >
@@ -1090,7 +1096,11 @@ export function AgentToolDiagram({
             left: 8,
             zIndex: 2,
             alignItems: "center",
-            bgcolor: alpha(theme.palette.background.paper, 0.92),
+            bgcolor: schemeAlpha(
+              theme,
+              schemePalette(theme).background.paper,
+              0.92,
+            ),
             border: 1,
             borderColor: "divider",
             borderRadius: 1,
@@ -1146,7 +1156,11 @@ export function AgentToolDiagram({
             right: 8,
             zIndex: 2,
             alignItems: "center",
-            bgcolor: alpha(theme.palette.background.paper, 0.92),
+            bgcolor: schemeAlpha(
+              theme,
+              schemePalette(theme).background.paper,
+              0.92,
+            ),
             border: 1,
             borderColor: "divider",
             borderRadius: 1,
@@ -1275,12 +1289,12 @@ export function AgentToolDiagram({
               >
                 <stop
                   offset="0%"
-                  stopColor={theme.palette.primary.main}
+                  stopColor={schemePalette(theme).primary.main}
                   stopOpacity={0.85}
                 />
                 <stop
                   offset="100%"
-                  stopColor={theme.palette.info.main}
+                  stopColor={schemePalette(theme).info.main}
                   stopOpacity={0.85}
                 />
               </linearGradient>
@@ -1295,7 +1309,7 @@ export function AgentToolDiagram({
               >
                 <path
                   d="M 0 1.5 L 8 5 L 0 8.5 z"
-                  fill={theme.palette.info.main}
+                  fill={schemePalette(theme).info.main}
                   opacity={0.75}
                 />
               </marker>
@@ -1308,7 +1322,7 @@ export function AgentToolDiagram({
                 cy={world.height / 2}
                 r={world.subagentRing}
                 fill="none"
-                stroke={alpha(theme.palette.divider, 0.55)}
+                stroke={schemeAlpha(theme, schemePalette(theme).divider, 0.55)}
                 strokeWidth={1}
                 strokeDasharray="4 6"
               />
@@ -1319,7 +1333,7 @@ export function AgentToolDiagram({
                   cy={world.height / 2}
                   r={ring}
                   fill="none"
-                  stroke={alpha(theme.palette.divider, 0.4)}
+                  stroke={schemeAlpha(theme, schemePalette(theme).divider, 0.4)}
                   strokeWidth={1}
                   strokeDasharray="2 8"
                 />

@@ -1,8 +1,13 @@
 import { Box, Chip, LinearProgress, Stack, Typography } from "@mui/material";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import type { AgentBreakdownRow } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
-import { focusHighlight, usagePartColors } from "../theme";
+import {
+  focusHighlight,
+  schemeAlpha,
+  schemePalette,
+  usagePartColors,
+} from "../theme";
 import { EmptyState } from "./ui";
 
 interface Props {
@@ -24,6 +29,7 @@ function MetricBar({
   percent: number;
   color: string;
 }) {
+  const theme = useTheme();
   return (
     <Box sx={{ minWidth: 0 }}>
       <Box
@@ -52,7 +58,7 @@ function MetricBar({
         sx={{
           height: 7,
           borderRadius: 1,
-          bgcolor: alpha(color, 0.14),
+          bgcolor: schemeAlpha(theme, color, 0.14),
           "& .MuiLinearProgress-bar": {
             borderRadius: 1,
             bgcolor: color,
@@ -227,13 +233,17 @@ export function AgentBreakdown({
                         ? highlight.borderColor
                         : "text.secondary",
                       bgcolor: selected
-                        ? alpha(theme.palette.warning.main, 0.14)
+                        ? schemeAlpha(
+                            theme,
+                            schemePalette(theme).warning.main,
+                            0.14,
+                          )
                         : "action.selected",
                     }
                   : undefined,
                 "&:focus-visible": selectable
                   ? {
-                      outline: `2px solid ${theme.palette.warning.main}`,
+                      outline: `2px solid ${schemePalette(theme).warning.main}`,
                       outlineOffset: 2,
                     }
                   : undefined,
@@ -315,7 +325,11 @@ export function AgentBreakdown({
                         height: 22,
                         fontFamily: theme.typography.mono?.fontFamily,
                         fontSize: "0.68rem",
-                        bgcolor: alpha(theme.palette.info.main, 0.1),
+                        bgcolor: schemeAlpha(
+                          theme,
+                          schemePalette(theme).info.main,
+                          0.1,
+                        ),
                         color: "text.primary",
                         border: 0,
                       }}
