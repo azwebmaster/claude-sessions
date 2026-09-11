@@ -39,6 +39,7 @@ function session(partial: Partial<SessionListItem> = {}): SessionListItem {
     },
     peakContextTokens: 80_000,
     source: "fixture",
+    active: false,
     ...partial,
   };
 }

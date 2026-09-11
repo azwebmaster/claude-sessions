@@ -3,6 +3,7 @@ import { Link as RouterLink, useParams } from "react-router-dom";
 import {
   Alert,
   Box,
+  Chip,
   CircularProgress,
   Link,
   Stack,
@@ -10,6 +11,7 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
+import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
 import type { LogLineRef, SessionDetail } from "@shared/types";
 import {
   formatTokens,
@@ -278,18 +280,38 @@ export function SessionDetailPage() {
         }}
       >
         <Box sx={{ minWidth: 0, flex: "1 1 auto", pr: { lg: 1 } }}>
-          <Typography
-            variant="h1"
-            sx={{
-              m: 0,
-              fontSize: { xs: "1.2rem", sm: "1.45rem", md: "1.9rem" },
-              maxWidth: "40rem",
-              wordBreak: "break-word",
-              lineHeight: 1.25,
-            }}
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}
           >
-            {meta.summary ?? "Untitled session"}
-          </Typography>
+            <Typography
+              variant="h1"
+              sx={{
+                m: 0,
+                fontSize: { xs: "1.2rem", sm: "1.45rem", md: "1.9rem" },
+                maxWidth: "40rem",
+                wordBreak: "break-word",
+                lineHeight: 1.25,
+              }}
+            >
+              {meta.summary ?? "Untitled session"}
+            </Typography>
+            {meta.active ? (
+              <Chip
+                size="small"
+                color="success"
+                label="Active"
+                icon={
+                  <FiberManualRecordIcon
+                    sx={{ fontSize: "0.7rem", animation: motion.pulse }}
+                  />
+                }
+                sx={{ fontWeight: 600, flexShrink: 0 }}
+                title="This session was updated recently — profile reflects the latest transcript on load. Re-analyze to refresh."
+              />
+            ) : null}
+          </Stack>
           <Typography
             component="div"
             variant="mono"

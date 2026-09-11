@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import type { SessionListItem } from "../shared/types.js";
+import { activeWindowMs, isSessionActive } from "../shared/activeSession.js";
 import {
   parseSessionFile,
   type RawSessionParse,
@@ -155,6 +156,8 @@ export async function discoverSessionFiles(
 function summarizeFromParse(
   file: DiscoveredSessionFile,
   parsed: RawSessionParse,
+  nowMs: number = Date.now(),
+  windowMs: number = activeWindowMs(),
 ): SessionListItem {
   return {
     id: file.id,
@@ -174,6 +177,15 @@ function summarizeFromParse(
     usage: parsed.usage,
     peakContextTokens: parsed.peakContextTokens,
     source: file.source,
+    active: isSessionActive(
+      {
+        updatedAt: parsed.updatedAt,
+        startedAt: parsed.startedAt,
+        source: file.source,
+      },
+      nowMs,
+      windowMs,
+    ),
   };
 }
 
@@ -182,6 +194,8 @@ export async function listSessions(
 ): Promise<SessionListItem[]> {
   const files = await discoverSessionFiles(roots);
   const items: SessionListItem[] = [];
+  const nowMs = Date.now();
+  const windowMs = activeWindowMs();
 
   for (const file of files) {
     try {
@@ -189,7 +203,7 @@ export async function listSessions(
         lightweight: true,
         sessionId: file.id,
       });
-      items.push(summarizeFromParse(file, parsed));
+      items.push(summarizeFromParse(file, parsed, nowMs, windowMs));
     } catch (err) {
       console.warn(`Failed to parse ${file.filePath}:`, err);
     }
@@ -202,6 +216,17 @@ export async function listSessions(
   });
 
   return items;
+}
+
+/**
+ * The most recently active (live) session, or null when none had transcript
+ * activity within the active window. Sessions are already sorted newest-first.
+ */
+export async function findActiveSession(
+  roots?: string[],
+): Promise<SessionListItem | null> {
+  const sessions = await listSessions(roots);
+  return sessions.find((s) => s.active) ?? null;
 }
 
 export async function findSessionFile(

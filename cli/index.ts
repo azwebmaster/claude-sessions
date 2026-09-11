@@ -4,7 +4,11 @@ import { startServer } from "../server/serve.js";
 import { AnalyzeSessionError } from "../server/analyze.js";
 import { runAnalyzeWithCache } from "../server/runAnalyzeWithCache.js";
 import { buildSessionDetail } from "../server/parser.js";
-import { listSessions, loadSessionRaw } from "../server/sessions.js";
+import {
+  findActiveSession,
+  listSessions,
+  loadSessionRaw,
+} from "../server/sessions.js";
 
 const PACKAGE_NAME = "claude-sessions";
 
@@ -17,12 +21,16 @@ Commands:
                         (defaults to the most recently updated session)
 
 Options for serve:
-  -p, --port <number>   Port to listen on (default: 8787, or $PORT)
+  -p, --port <number>   Port to listen on. If busy, the next free port in the
+                        range is used (default: 8787, or $PORT)
   -H, --host <host>     Hostname to bind (default: 127.0.0.1)
 
 Options for analyze:
   -m, --model <alias>   Model alias for Agent SDK analysis: opus, sonnet, or haiku
                         (default: haiku, or $CLAUDE_SESSIONS_ANALYZE_MODEL)
+  -a, --active          Profile the active (live) session — the one appended to
+                        within the active window (default 10m,
+                        $CLAUDE_SESSIONS_ACTIVE_WINDOW_MS)
   -f, --force           Bypass cached analysis and run a fresh Agent SDK query
 
 Global:
@@ -32,6 +40,7 @@ Examples:
   ${PACKAGE_NAME} serve
   ${PACKAGE_NAME} serve --port 3000
   ${PACKAGE_NAME} analyze
+  ${PACKAGE_NAME} analyze --active
   ${PACKAGE_NAME} analyze 11111111-1111-1111-1111-111111111111
   ${PACKAGE_NAME} analyze --model haiku
   ${PACKAGE_NAME} analyze --force
@@ -42,9 +51,26 @@ async function runAnalyze(options: {
   sessionId?: string;
   model?: string;
   force?: boolean;
+  active?: boolean;
 }): Promise<void> {
   let sessionId = options.sessionId;
-  if (!sessionId) {
+  if (options.active) {
+    if (sessionId) {
+      console.error("Ignoring session id because --active was given.");
+    }
+    const current = await findActiveSession();
+    if (!current) {
+      console.error(
+        "No active Claude session found (no transcript updated within the active window). " +
+          "Start or continue a Claude Code session, or increase $CLAUDE_SESSIONS_ACTIVE_WINDOW_MS.",
+      );
+      process.exit(1);
+    }
+    sessionId = current.id;
+    console.error(
+      `Analyzing active session ${sessionId}${current.summary ? ` (${current.summary})` : ""}…`,
+    );
+  } else if (!sessionId) {
     const sessions = await listSessions();
     const current = sessions[0];
     if (!current) {
@@ -103,6 +129,7 @@ async function main(): Promise<void> {
       port: { type: "string", short: "p" },
       host: { type: "string", short: "H" },
       model: { type: "string", short: "m" },
+      active: { type: "boolean", short: "a", default: false },
       force: { type: "boolean", short: "f", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -134,6 +161,7 @@ async function main(): Promise<void> {
       sessionId,
       model: values.model,
       force: values.force,
+      active: values.active,
     });
     return;
   }
