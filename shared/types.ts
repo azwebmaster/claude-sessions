@@ -39,6 +39,11 @@ export interface SessionListItem {
   /** Peak context size (input + cache tokens) observed across assistant turns */
   peakContextTokens: number;
   source: "local" | "fixture";
+  /**
+   * True when the transcript was appended to recently (Claude is/was live in
+   * this session). See `isSessionActive` in `shared/activeSession`.
+   */
+  active: boolean;
 }
 
 export type TreeNodeKind =

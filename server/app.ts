@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import {
   defaultSessionRoots,
+  findActiveSession,
   findSessionFile,
   listSessions,
   loadSessionRaw,
@@ -54,6 +55,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       roots: defaultSessionRoots(),
       count: sessions.length,
     });
+  });
+
+  // Must be registered before `/api/sessions/:id` so "active" is not treated
+  // as a session id.
+  app.get("/api/sessions/active", async (c) => {
+    const session = await findActiveSession();
+    return c.json({ session });
   });
 
   app.get("/api/sessions/:id", async (c) => {

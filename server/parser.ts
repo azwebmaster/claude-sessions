@@ -22,6 +22,7 @@ import {
   emptyUsage,
   totalTokens,
 } from "../shared/types.js";
+import { activeWindowMs, isSessionActive } from "../shared/activeSession.js";
 import {
   decodeProjectPath,
   type DiscoveredSessionFile,
@@ -1848,6 +1849,7 @@ function agentToolSummaries(
 export function buildSessionDetail(
   file: DiscoveredSessionFile,
   parsed: RawSessionParse,
+  nowMs: number = Date.now(),
 ): SessionDetail {
   const meta: SessionListItem = {
     id: file.id,
@@ -1867,6 +1869,15 @@ export function buildSessionDetail(
     usage: parsed.usage,
     peakContextTokens: parsed.peakContextTokens,
     source: file.source,
+    active: isSessionActive(
+      {
+        updatedAt: parsed.updatedAt,
+        startedAt: parsed.startedAt,
+        source: file.source,
+      },
+      nowMs,
+      activeWindowMs(),
+    ),
   };
 
   const rootBuild = buildAgentTreeFromEntries(parsed.entries, {

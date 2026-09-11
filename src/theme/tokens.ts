@@ -21,12 +21,18 @@ export const motion = {
   riseFast: "rise 280ms ease both",
   riseMedium: "rise 420ms ease both",
   riseSlow: "rise 600ms ease both",
+  /** Gentle attention pulse for "live"/active indicators. */
+  pulse: "pulse 1.8s ease-in-out infinite",
 } as const;
 
 export const keyframes = {
   "@keyframes rise": {
     from: { opacity: 0, transform: "translateY(10px)" },
     to: { opacity: 1, transform: "translateY(0)" },
+  },
+  "@keyframes pulse": {
+    "0%, 100%": { opacity: 1 },
+    "50%": { opacity: 0.35 },
   },
 } as const;
 

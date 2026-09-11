@@ -16,6 +16,14 @@ TypeScript web app (React + pnpm + ESM) that reads local [Claude Code](https://c
 
 Demo fixtures under `fixtures/projects` are always included so the UI works without local Claude Code history.
 
+### Active (live) sessions
+
+A session is marked **active** when its transcript was appended to within the active window (default 10 minutes; override with `$CLAUDE_SESSIONS_ACTIVE_WINDOW_MS`), i.e. Claude Code is currently working in it. Fixtures are never active.
+
+- The list shows an **Active** badge and a **Profile active session** shortcut that jumps straight to the live session; the detail page shows a pulsing **Active** chip. Re-run **Analyze session** to refresh as the transcript grows.
+- API: `GET /api/sessions/active` returns `{ session }` (the most recently active session, or `null`). Every session in `GET /api/sessions` and each `GET /api/sessions/:id` carries an `active` boolean.
+- CLI: `claude-sessions analyze --active` profiles the live session (errors if none is active).
+
 ## Quick start
 
 ```bash
@@ -54,13 +62,14 @@ Options:
 claude-sessions serve --port 3000
 claude-sessions serve -H 0.0.0.0 -p 8787
 claude-sessions analyze                 # most recently updated session
+claude-sessions analyze --active        # the live/active session (see below)
 claude-sessions analyze <session-uuid>
 claude-sessions analyze --model haiku
 claude-sessions analyze --force
 claude-sessions --help
 ```
 
-Port can also be set with `$PORT`. During development you can run the CLI via tsx without building:
+Port can also be set with `$PORT`. If the requested port is already in use, `serve` automatically scans upward for the next free port in a range (default 50 ports; override with `$CLAUDE_SESSIONS_PORT_SCAN_SPAN`) and logs the port it settled on. During development you can run the CLI via tsx without building:
 
 ```bash
 pnpm exec tsx cli/index.ts serve

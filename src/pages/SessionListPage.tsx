@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
+import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
+import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
 import {
   Alert,
   Box,
@@ -56,6 +58,15 @@ interface SessionsResponse {
 function SessionChips({ session }: { session: SessionListItem }) {
   return (
     <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 0.75, flexWrap: "wrap" }}>
+      {session.active ? (
+        <Chip
+          size="small"
+          color="success"
+          label="Active"
+          icon={<FiberManualRecordIcon sx={{ fontSize: "0.7rem" }} />}
+          sx={{ fontWeight: 600 }}
+        />
+      ) : null}
       <Chip
         size="small"
         label={session.source}
@@ -388,9 +399,64 @@ export function SessionListPage() {
     );
   }
 
+  const activeSession = data.sessions.find((s) => s.active) ?? null;
+
   return (
     <Box sx={{ animation: motion.riseSlow, minWidth: 0 }}>
       <SectionPaper>
+        {activeSession ? (
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.5}
+            sx={{
+              alignItems: { sm: "center" },
+              justifyContent: "space-between",
+              mb: 2,
+              p: 1.5,
+              borderRadius: 1.5,
+              border: 1,
+              borderColor: "success.main",
+              // Tint using the theme's success color at low opacity.
+              backgroundColor: (theme) =>
+                theme.palette.mode === "dark"
+                  ? "rgba(102, 187, 106, 0.12)"
+                  : "rgba(46, 125, 50, 0.08)",
+            }}
+          >
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+              <FiberManualRecordIcon
+                color="success"
+                sx={{ fontSize: "0.8rem", flexShrink: 0, animation: motion.pulse }}
+              />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="subtitle2" sx={{ lineHeight: 1.3 }}>
+                  Active Claude session
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {activeSession.summary ?? "Untitled session"}
+                </Typography>
+              </Box>
+            </Stack>
+            <Button
+              variant="contained"
+              color="success"
+              size="small"
+              startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
+              onClick={() => navigate(`/sessions/${activeSession.id}`)}
+              sx={{ flexShrink: 0, alignSelf: { xs: "stretch", sm: "center" } }}
+            >
+              Profile active session
+            </Button>
+          </Stack>
+        ) : null}
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}
