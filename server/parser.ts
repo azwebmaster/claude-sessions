@@ -4,12 +4,15 @@ import type {
   AgentBreakdownRow,
   AgentToolSummary,
   ContextCategorySummary,
+  ContextGrowthCause,
   ContextTimelinePoint,
   LoadedContextItem,
   LoadedContextKind,
   LogLineRef,
+  SessionAgent,
   SessionDetail,
   SessionListItem,
+  SubagentLaunchSummary,
   TokenUsage,
   ToolImpactCall,
   ToolImpactRow,
@@ -20,12 +23,15 @@ import {
   addUsage,
   contextSize,
   emptyUsage,
+  logLineKey,
+  TOOL_RESULT_PREVIEW_CAP,
   totalTokens,
 } from "../shared/types.js";
 import {
   decodeProjectPath,
   type DiscoveredSessionFile,
 } from "./sessions.js";
+import { truncateTaggedContent } from "../shared/taggedContent.js";
 
 interface RawUsage {
   input_tokens?: number;
@@ -84,6 +90,30 @@ interface SourcedEntry {
   raw: string;
 }
 
+/**
+ * Contents of a subagent transcript's `.meta.json` sidecar, written next to
+ * the `.jsonl` by Claude Code. Every field is optional and the whole sidecar
+ * may be missing: older Claude Code versions wrote none, so every consumer
+ * must survive `null`.
+ */
+export interface SubagentMeta {
+  agentType?: string | null;
+  description?: string | null;
+  /** id of the Task/Agent `tool_use` block that launched this subagent. */
+  toolUseId?: string | null;
+  /** agentId of the launching subagent when `spawnDepth >= 2`. */
+  parentAgentId?: string | null;
+  spawnDepth?: number | null;
+}
+
+export interface SubagentFile {
+  agentId: string;
+  filePath: string;
+  entries: SourcedEntry[];
+  /** `null` when the sidecar is absent, unreadable, or not a JSON object. */
+  meta: SubagentMeta | null;
+}
+
 export interface RawSessionParse {
   summary: string | null;
   startedAt: string | null;
@@ -99,7 +129,7 @@ export interface RawSessionParse {
   usage: TokenUsage;
   peakContextTokens: number;
   entries: SourcedEntry[];
-  subagentFiles: { agentId: string; filePath: string; entries: SourcedEntry[] }[];
+  subagentFiles: SubagentFile[];
 }
 
 /** Assistant entries that appear as turns on the context timeline. */
@@ -109,12 +139,127 @@ function isTimelineAssistantTurn(entry: RawEntry): boolean {
   return totalTokens(u) > 0 || contextSize(u) > 0;
 }
 
+/** A `user`-type entry whose blocks are all `tool_result` (not a real prompt). */
+function isToolResultOnlyUserEntry(entry: RawEntry): boolean {
+  if (entry.type !== "user") return false;
+  const blocks = asBlocks(entry.message?.content);
+  return blocks.length > 0 && blocks.every((b) => b.type === "tool_result");
+}
+
+/** True for a `user` entry that represents an actual prompt from the user
+ * (as opposed to a synthetic entry carrying only tool results). */
+function isRealUserPrompt(entry: RawEntry): boolean {
+  return entry.type === "user" && !isToolResultOnlyUserEntry(entry);
+}
+
+/** One real turn: everything from a real user prompt up to (but not
+ * including) the next real user prompt, or EOF. */
+interface TimelineTurnGroup {
+  /** The subset of entries in this turn that pass `isTimelineAssistantTurn`. */
+  qualifyingAssistantEntries: SourcedEntry[];
+  /** True only if this group was opened by an actual `isRealUserPrompt`
+   * entry. A group seeded by the `!current` fallback (leading entries that
+   * appear before the first real user prompt in the stream, e.g. a
+   * resumed/continued session file that starts mid-conversation) collects
+   * those entries, but every consumer — `countRealTurns` and `buildTimeline`
+   * — skips it, so they are not counted and get no timeline point. */
+  openedByRealPrompt: boolean;
+  /** The real user prompt entry this group was opened by — the text the rail
+   * shows as `promptPreview`. Null for a `!current` fallback group. */
+  openingPrompt: SourcedEntry | null;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
+/** Groups a flat entry stream into one `TimelineTurnGroup` per real user
+ * prompt — the entire span between a user submitting a prompt and the next
+ * real prompt (or EOF), including every tool call/result/attachment the
+ * agent produced while working on it.
+ *
+ * Memoized per `sourcedEntries` array: `buildSessionDetail` / `parseSessionFile`
+ * call this (directly or via `countRealTurns`) several times over the same
+ * entries array (turn counting, timeline building, tree building), so caching
+ * by array identity avoids re-walking and re-allocating identical groups. */
+const turnGroupsCache = new WeakMap<SourcedEntry[], TimelineTurnGroup[]>();
+
+function groupIntoTurns(sourcedEntries: SourcedEntry[]): TimelineTurnGroup[] {
+  const cached = turnGroupsCache.get(sourcedEntries);
+  if (cached) return cached;
+
+  const groups: TimelineTurnGroup[] = [];
+  let current: TimelineTurnGroup | null = null;
+
+  for (const sourced of sourcedEntries) {
+    const entry = sourced.entry;
+    const startsRealPrompt = isRealUserPrompt(entry);
+    if (startsRealPrompt || !current) {
+      current = {
+        qualifyingAssistantEntries: [],
+        openedByRealPrompt: startsRealPrompt,
+        openingPrompt: startsRealPrompt ? sourced : null,
+        startedAt: null,
+        endedAt: null,
+      };
+      groups.push(current);
+    }
+    if (isTimelineAssistantTurn(entry)) {
+      current.qualifyingAssistantEntries.push(sourced);
+    }
+    if (entry.timestamp) {
+      if (!current.startedAt || entry.timestamp < current.startedAt) {
+        current.startedAt = entry.timestamp;
+      }
+      if (!current.endedAt || entry.timestamp > current.endedAt) {
+        current.endedAt = entry.timestamp;
+      }
+    }
+  }
+
+  turnGroupsCache.set(sourcedEntries, groups);
+  return groups;
+}
+
+/** Number of real turns — groups opened by an actual user prompt that
+ * produced at least one qualifying assistant entry. */
+function countRealTurns(sourcedEntries: SourcedEntry[]): number {
+  return groupIntoTurns(sourcedEntries).filter(
+    (g) => g.openedByRealPrompt && g.qualifyingAssistantEntries.length > 0,
+  ).length;
+}
+
 function toLogRef(source: SourcedEntry): LogLineRef {
   return {
     filePath: source.filePath,
     line: source.line,
     raw: source.raw,
   };
+}
+
+const SUBAGENT_LAUNCH_TOOL_NAMES = new Set(["Task", "Agent", "TaskCreate"]);
+
+/** True for tool names that launch a subagent (Task/Agent/TaskCreate). */
+function isSubagentLaunchTool(name: string | null | undefined): boolean {
+  return name != null && SUBAGENT_LAUNCH_TOOL_NAMES.has(name);
+}
+
+/**
+ * Stable per-turn identifier used to correlate the context timeline with
+ * tool-impact attribution (`causedBy`) and subagent launches. Computed once
+ * so both joins key off the same entry->nodeId mapping instead of each
+ * re-deriving `entry.uuid ?? assistant-${assistantIndex}` independently,
+ * which could silently desync if only one of them changed its iteration.
+ */
+function computeAssistantNodeIds(
+  sourcedEntries: SourcedEntry[],
+): Map<SourcedEntry, string> {
+  const nodeIds = new Map<SourcedEntry, string>();
+  let assistantIndex = 0;
+  for (const sourced of sourcedEntries) {
+    if (sourced.entry.type !== "assistant") continue;
+    nodeIds.set(sourced, sourced.entry.uuid ?? `assistant-${assistantIndex}`);
+    assistantIndex += 1;
+  }
+  return nodeIds;
 }
 
 function toUsage(raw?: RawUsage | null): TokenUsage {
@@ -137,7 +282,16 @@ function previewText(text: string | null | undefined, max = 160): string | null 
   if (!text) return null;
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
-  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+  // Tag-aware: a naive char slice can cut a `<tag>` in half before its
+  // closing bracket, leaving it undetected as markup by client-side
+  // rendering, which then shows the raw angle brackets instead of a chip.
+  return truncateTaggedContent(cleaned, max);
+}
+
+/** Drops `<system-reminder>…</system-reminder>` blocks that Claude Code
+ * injects into user message text, leaving what the user actually typed. */
+function stripSystemReminders(text: string): string {
+  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "");
 }
 
 function estimateTokensFromText(text: string): number {
@@ -241,7 +395,7 @@ function toolInputPreview(
 }
 
 function toolResultPreview(content: unknown): string | null {
-  return previewText(stringifyContent(content), 220);
+  return previewText(stringifyContent(content), TOOL_RESULT_PREVIEW_CAP);
 }
 
 /** Attach a tool result onto the matching impact call / pending attribution. */
@@ -277,8 +431,21 @@ function applyToolResult(opts: {
     }
     meta.call.resultTokens = Math.max(meta.call.resultTokens, resultTokens);
     meta.call.isError = meta.call.isError || opts.isError;
-    if (!meta.call.timestamp && opts.timestamp) {
-      meta.call.timestamp = opts.timestamp;
+    // "A result arrived" is its own bit: a result entry with no timestamp still
+    // leaves completedAt null, and the UI must not read that as in flight.
+    meta.call.resultApplied = true;
+    // Only backfill completedAt here — meta.call.timestamp reflects when the
+    // tool_use was invoked (or is null if unknown) and must never be set from
+    // the result's own timestamp, or durationMs would compute as 0 instead of
+    // staying unknown.
+    if (!meta.call.completedAt && opts.timestamp) {
+      meta.call.completedAt = opts.timestamp;
+    }
+    if (meta.call.timestamp && meta.call.completedAt) {
+      const durationMs =
+        Date.parse(meta.call.completedAt) - Date.parse(meta.call.timestamp);
+      meta.call.durationMs =
+        Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : null;
     }
     const row = opts.byTool.get(meta.toolName);
     if (row) {
@@ -297,6 +464,9 @@ function applyToolResult(opts: {
   const call: ToolImpactCall = {
     toolUseId: opts.toolUseId,
     timestamp: opts.timestamp,
+    resultApplied: true,
+    completedAt: opts.timestamp,
+    durationMs: null,
     inputPreview: null,
     resultPreview,
     resultTokens,
@@ -356,18 +526,45 @@ export async function countSubagentFiles(
 }
 
 function countTimelineTurns(entries: SourcedEntry[]): number {
-  let turns = 0;
-  for (const { entry } of entries) {
-    if (isTimelineAssistantTurn(entry)) turns += 1;
+  return countRealTurns(entries);
+}
+
+/** Read `<transcript>.meta.json`; `null` on any read or parse failure. */
+async function readSubagentMeta(
+  transcriptPath: string,
+): Promise<SubagentMeta | null> {
+  const metaPath = transcriptPath.replace(/\.jsonl$/, ".meta.json");
+  let text: string;
+  try {
+    text = await readFile(metaPath, "utf8");
+  } catch {
+    return null;
   }
-  return turns;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as SubagentMeta;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sort key for parent-first ordering. A missing or non-numeric `spawnDepth`
+ * counts as 1 (launched from the root transcript), so sidecar-less subagents
+ * keep the timestamp-only order they had before sidecars were read.
+ */
+function spawnDepthOf(meta: SubagentMeta | null): number {
+  const depth = meta?.spawnDepth;
+  return typeof depth === "number" && Number.isFinite(depth) ? depth : 1;
 }
 
 async function loadSubagents(
   sessionFilePath: string,
-): Promise<{ agentId: string; filePath: string; entries: SourcedEntry[] }[]> {
-  const results: { agentId: string; filePath: string; entries: SourcedEntry[] }[] =
-    [];
+): Promise<SubagentFile[]> {
+  const results: SubagentFile[] = [];
   const seen = new Set<string>();
 
   for (const dir of subagentDirsForSession(sessionFilePath)) {
@@ -393,9 +590,24 @@ async function loadSubagents(
       seen.add(filePath);
       const agentId = file.replace(/\.jsonl$/, "").replace(/^agent-/, "");
       const entries = await readEntries(filePath);
-      results.push({ agentId, filePath, entries });
+      const meta = await readSubagentMeta(filePath);
+      results.push({ agentId, filePath, entries, meta });
     }
   }
+
+  // `readdir()` order is filesystem-dependent, not launch order. Sort
+  // parent-first (`spawnDepth` ascending) so a nested subagent's parent tree
+  // is already built when the child attaches to it, then by each subagent's
+  // earliest transcript timestamp so positional pairing with Task tool-call
+  // nodes (visited in chronological transcript order) is deterministic
+  // instead of depending on directory listing order.
+  results.sort((a, b) => {
+    const depthDelta = spawnDepthOf(a.meta) - spawnDepthOf(b.meta);
+    if (depthDelta !== 0) return depthDelta;
+    const at = a.entries[0]?.entry.timestamp ?? "";
+    const bt = b.entries[0]?.entry.timestamp ?? "";
+    return at.localeCompare(bt);
+  });
 
   return results;
 }
@@ -415,10 +627,10 @@ export async function parseSessionFile(
   );
 
   let summary: string | null = null;
+  let firstUserText: string | null = null;
   let startedAt: string | null = null;
   let updatedAt: string | null = null;
   let messageCount = 0;
-  let turnCount = 0;
   let toolCallCount = 0;
   let model: string | null = null;
   let gitBranch: string | null = null;
@@ -441,10 +653,19 @@ export async function parseSessionFile(
     if (entry.agentId) agentIds.add(String(entry.agentId));
 
     if (entry.type === "user") {
-      const blocks = asBlocks(entry.message?.content);
-      const isToolResultOnly =
-        blocks.length > 0 && blocks.every((b) => b.type === "tool_result");
-      if (!isToolResultOnly) messageCount += 1;
+      if (!isToolResultOnlyUserEntry(entry)) {
+        const blocks = asBlocks(entry.message?.content);
+        messageCount += 1;
+        if (firstUserText === null) {
+          const text = blocks
+            .filter((b) => b.type === "text")
+            .map((b) => b.text ?? "")
+            .join(" ")
+            .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "")
+            .trim();
+          if (text) firstUserText = text;
+        }
+      }
     }
 
     if (entry.type === "assistant") {
@@ -452,7 +673,6 @@ export async function parseSessionFile(
       const u = toUsage(entry.message?.usage);
       usage = addUsage(usage, u);
       peakContextTokens = Math.max(peakContextTokens, contextSize(u));
-      if (isTimelineAssistantTurn(entry)) turnCount += 1;
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use") toolCallCount += 1;
       }
@@ -460,6 +680,13 @@ export async function parseSessionFile(
   };
 
   for (const sourced of entries) consider(sourced.entry);
+  const turnCount = countRealTurns(entries);
+
+  // Fall back to a title derived from the first user message when the
+  // transcript has no explicit `type:"summary"` entry.
+  if (summary === null && firstUserText) {
+    summary = previewText(firstUserText);
+  }
 
   // Subagent transcripts contribute agent identity / counts, but their token
   // usage is reported separately in the agent breakdown (not double-counted
@@ -475,7 +702,7 @@ export async function parseSessionFile(
     for (const block of asBlocks(entry.message?.content)) {
       if (block.type !== "tool_use") continue;
       const name = block.name ?? "";
-      if (name === "Task" || name === "Agent" || name === "TaskCreate") {
+      if (isSubagentLaunchTool(name)) {
         const input = block.input ?? {};
         const subId =
           (input.agent_id as string) ||
@@ -493,9 +720,7 @@ export async function parseSessionFile(
     return (
       n +
       asBlocks(entry.message?.content).filter(
-        (b) =>
-          b.type === "tool_use" &&
-          (b.name === "Task" || b.name === "Agent" || b.name === "TaskCreate"),
+        (b) => b.type === "tool_use" && isSubagentLaunchTool(b.name),
       ).length
     );
   }, 0);
@@ -554,7 +779,8 @@ function ensureToolRow(
 
 function buildToolImpact(
   sourcedEntries: SourcedEntry[],
-): ToolImpactRow[] {
+  nodeIds: Map<SourcedEntry, string>,
+): { rows: ToolImpactRow[]; byTurn: Map<string, ContextGrowthCause[]> } {
   const byTool = new Map<
     string,
     {
@@ -570,11 +796,15 @@ function buildToolImpact(
     string,
     { toolName: string; call: ToolImpactCall }
   >();
+  const byTurn = new Map<string, ContextGrowthCause[]>();
   let lastContext: number | null = null;
   let pending: { toolName: string; call: ToolImpactCall }[] = [];
 
-  for (const { entry } of sourcedEntries) {
+  for (const sourced of sourcedEntries) {
+    const { entry } = sourced;
     if (entry.type === "assistant") {
+      const nodeId = nodeIds.get(sourced)!;
+
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use" && block.id && block.name) {
           const row = ensureToolRow(byTool, block.name);
@@ -582,6 +812,9 @@ function buildToolImpact(
           const call: ToolImpactCall = {
             toolUseId: block.id,
             timestamp: entry.timestamp ?? null,
+            resultApplied: false,
+            completedAt: null,
+            durationMs: null,
             inputPreview: toolInputPreview(block.name, block.input),
             resultPreview: null,
             resultTokens: 0,
@@ -600,12 +833,20 @@ function buildToolImpact(
         if (growth > 0 && pending.length > 0) {
           const weightSum =
             pending.reduce((s, p) => s + p.call.resultTokens, 0) || 1;
+          const causes: ContextGrowthCause[] = [];
           for (const item of pending) {
             const share = (item.call.resultTokens / weightSum) * growth;
             item.call.contextGrowthAttributed += share;
             const row = byTool.get(item.toolName);
             if (row) row.contextGrowthAttributed += share;
+            causes.push({
+              toolUseId: item.call.toolUseId,
+              contextGrowthAttributed: Math.round(share),
+              inputPreview: item.call.inputPreview,
+            });
           }
+          causes.sort((a, b) => b.contextGrowthAttributed - a.contextGrowthAttributed);
+          byTurn.set(nodeId, causes);
         }
         lastContext = ctx;
         pending = [];
@@ -669,7 +910,7 @@ function buildToolImpact(
     }
   }
 
-  return [...byTool.entries()]
+  const rows = [...byTool.entries()]
     .map(([toolName, row]) => {
       const totalResultTokens = row.calls.reduce(
         (sum, call) => sum + call.resultTokens,
@@ -704,6 +945,8 @@ function buildToolImpact(
         b.contextGrowthAttributed - a.contextGrowthAttributed ||
         b.totalResultTokens - a.totalResultTokens,
     );
+
+  return { rows, byTurn };
 }
 
 const CATEGORY_LABELS: Record<LoadedContextKind, string> = {
@@ -866,16 +1109,41 @@ function summarizeCategories(
   });
 }
 
+/** Stash a log ref's raw JSONL text once in the shared `logLines` dictionary
+ * and return the ref with `raw` emptied, so the same line text isn't
+ * re-embedded by every holder of a ref to it. */
+function stashLogLine(
+  ref: LogLineRef,
+  logLines: Record<string, string>,
+): LogLineRef {
+  const key = logLineKey(ref);
+  if (!(key in logLines)) logLines[key] = ref.raw;
+  return { ...ref, raw: "" };
+}
+
 function snapshotInventory(
   inventory: Map<string, LoadedContextItem>,
   point: ContextTimelinePoint,
+  logLines: Record<string, string>,
 ): TurnLoadedContext {
-  const items = [...inventory.values()].sort((a, b) => {
-    const ai = CATEGORY_ORDER.indexOf(a.kind);
-    const bi = CATEGORY_ORDER.indexOf(b.kind);
-    if (ai !== bi) return ai - bi;
-    return (b.estimatedTokens ?? 0) - (a.estimatedTokens ?? 0);
-  });
+  // `upsertItem` never prunes the running inventory, so each turn re-embeds
+  // every item accumulated so far. Strip each item's raw JSONL text down to
+  // "" here (once per item, as the snapshot is first built) and stash it
+  // once per unique (filePath, line) in the shared `logLines` dictionary
+  // instead of duplicating it across every snapshot.
+  const items = [...inventory.values()]
+    .sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a.kind);
+      const bi = CATEGORY_ORDER.indexOf(b.kind);
+      if (ai !== bi) return ai - bi;
+      return (b.estimatedTokens ?? 0) - (a.estimatedTokens ?? 0);
+    })
+    .map((item) => {
+      if (!item.evidence) return item;
+      const key = logLineKey(item.evidence);
+      if (!(key in logLines)) logLines[key] = item.evidence.raw;
+      return { ...item, evidence: { ...item.evidence, raw: "" } };
+    });
   const categories = summarizeCategories(items);
   const attributed = categories.reduce(
     (sum, c) => sum + (c.estimatedTokens ?? 0),
@@ -920,12 +1188,13 @@ function snapshotInventory(
 function buildLoadedContext(
   sourcedEntries: SourcedEntry[],
   timeline: ContextTimelinePoint[],
-): TurnLoadedContext[] {
-  if (timeline.length === 0) return [];
+  nodeIds: Map<SourcedEntry, string>,
+): { loadedContext: TurnLoadedContext[]; logLines: Record<string, string> } {
+  if (timeline.length === 0) return { loadedContext: [], logLines: {} };
 
   const inventory = new Map<string, LoadedContextItem>();
   const snapshots = new Map<string, TurnLoadedContext>();
-  let assistantIndex = 0;
+  const logLines: Record<string, string> = {};
   let sawBaseline = false;
   let userMessageCount = 0;
   let assistantMessageCount = 0;
@@ -1415,8 +1684,7 @@ function buildLoadedContext(
     }
 
     if (entry.type === "assistant") {
-      const nodeId = entry.uuid ?? `assistant-${assistantIndex}`;
-      assistantIndex += 1;
+      const nodeId = nodeIds.get(sourced)!;
       const u = toUsage(entry.message?.usage);
       const blocks = asBlocks(entry.message?.content);
       const text = blocks
@@ -1512,57 +1780,126 @@ function buildLoadedContext(
 
         const point = timeline.find((p) => p.nodeId === nodeId);
         if (point) {
-          snapshots.set(nodeId, snapshotInventory(inventory, point));
+          snapshots.set(nodeId, snapshotInventory(inventory, point, logLines));
         }
       }
     }
   }
 
-  return timeline.map(
+  const loadedContext = timeline.map(
     (point) =>
-      snapshots.get(point.nodeId) ?? snapshotInventory(inventory, point),
+      snapshots.get(point.nodeId) ??
+      snapshotInventory(inventory, point, logLines),
   );
+  return { loadedContext, logLines };
 }
 
-function buildTimeline(sourcedEntries: SourcedEntry[]): ContextTimelinePoint[] {
+function buildTimeline(
+  sourcedEntries: SourcedEntry[],
+  nodeIds: Map<SourcedEntry, string>,
+): { points: ContextTimelinePoint[]; subagentToolUseIds: Map<string, string[]> } {
   const points: ContextTimelinePoint[] = [];
+  const subagentToolUseIds = new Map<string, string[]>();
   let turn = 0;
-  let assistantIndex = 0;
-  for (const sourced of sourcedEntries) {
-    const entry = sourced.entry;
-    if (entry.type !== "assistant") continue;
-    const nodeId = entry.uuid ?? `assistant-${assistantIndex}`;
-    assistantIndex += 1;
-    if (!isTimelineAssistantTurn(entry)) continue;
-    const u = toUsage(entry.message?.usage);
+  for (const group of groupIntoTurns(sourcedEntries)) {
+    const qualifying = group.qualifyingAssistantEntries;
+    if (!group.openedByRealPrompt || qualifying.length === 0) continue;
     turn += 1;
-    const tools = asBlocks(entry.message?.content)
+
+    const last = qualifying[qualifying.length - 1];
+    const lastEntry = last.entry;
+    const nodeId = nodeIds.get(last)!;
+
+    // Output is billed per model call, so it accumulates over the turn. The
+    // context parts are not: every call in a turn re-sends the same prefix, so
+    // summing them would count one cached prefix once per call and disagree
+    // with `contextTokens`. They come from `lastUsage` below instead.
+    let outputTokens = 0;
+    const memberNodeIds: string[] = [];
+    const launchIds: string[] = [];
+
+    for (const sourced of qualifying) {
+      const u = toUsage(sourced.entry.message?.usage);
+      outputTokens += u.outputTokens;
+      memberNodeIds.push(nodeIds.get(sourced)!);
+      for (const block of asBlocks(sourced.entry.message?.content)) {
+        if (block.type === "tool_use" && isSubagentLaunchTool(block.name) && block.id) {
+          launchIds.push(block.id);
+        }
+      }
+    }
+    if (launchIds.length > 0) subagentToolUseIds.set(nodeId, launchIds);
+
+    const lastUsage = toUsage(lastEntry.message?.usage);
+    const tools = asBlocks(lastEntry.message?.content)
       .filter((b) => b.type === "tool_use")
       .map((b) => b.name)
       .filter(Boolean);
-    const text = asBlocks(entry.message?.content)
+    const text = asBlocks(lastEntry.message?.content)
       .filter((b) => b.type === "text")
       .map((b) => b.text ?? "")
       .join(" ");
+    const opening = group.openingPrompt;
+    const promptText = opening
+      ? asBlocks(opening.entry.message?.content)
+          .filter((b) => b.type === "text")
+          .map((b) => b.text ?? "")
+          .join(" ")
+      : "";
     points.push({
       turn,
       nodeId,
-      timestamp: entry.timestamp ?? null,
       label: previewText(text, 80) ?? (tools[0] ? `→ ${tools.join(", ")}` : `Turn ${turn}`),
-      contextTokens: contextSize(u),
-      inputTokens: u.inputTokens,
-      cacheReadTokens: u.cacheReadInputTokens,
-      cacheCreationTokens: u.cacheCreationInputTokens,
-      outputTokens: u.outputTokens,
+      contextTokens: contextSize(lastUsage),
+      inputTokens: lastUsage.inputTokens,
+      cacheReadTokens: lastUsage.cacheReadInputTokens,
+      cacheCreationTokens: lastUsage.cacheCreationInputTokens,
+      outputTokens,
       toolName: tools[0] ?? null,
-      log: toLogRef(sourced),
+      log: toLogRef(last),
+      causedBy: [],
+      subagentLaunches: [],
+      memberNodeIds,
+      promptPreview: previewText(stripSystemReminders(promptText)),
+      promptLog: opening ? toLogRef(opening) : null,
+      startedAt: group.startedAt,
+      endedAt: group.endedAt,
     });
   }
-  return points;
+  return { points, subagentToolUseIds };
+}
+
+/** Resolves each point's `subagentToolUseIds` into launch summaries. Runs for
+ *  the root timeline and for every subagent timeline that launched a further
+ *  subagent, so nesting reads the same as a top-level launch. */
+function fillSubagentLaunches(
+  points: ContextTimelinePoint[],
+  launchIdsByNodeId: Map<string, string[]>,
+  rowByToolUseId: Map<string, AgentBreakdownRow>,
+): void {
+  for (const point of points) {
+    const launchIds = launchIdsByNodeId.get(point.nodeId);
+    if (!launchIds) continue;
+    point.subagentLaunches = launchIds
+      .map((toolUseId) => {
+        const row = rowByToolUseId.get(toolUseId);
+        if (!row) return null;
+        return {
+          agentId: row.agentId,
+          label: row.label,
+          toolUseId,
+          peakContextTokens: row.peakContextTokens,
+          turnCount: row.turnCount,
+          toolCallCount: row.toolCallCount,
+        };
+      })
+      .filter((launch): launch is SubagentLaunchSummary => launch != null);
+  }
 }
 
 function buildAgentTreeFromEntries(
   sourcedEntries: SourcedEntry[],
+  nodeIds: Map<SourcedEntry, string>,
   opts: {
     id: string;
     label: string;
@@ -1598,8 +1935,6 @@ function buildAgentTreeFromEntries(
   let peak = 0;
   let toolCalls = 0;
   let messages = 0;
-  let turns = 0;
-  let assistantIndex = 0;
   let lastContext: number | null = null;
 
   for (const sourced of sourcedEntries) {
@@ -1669,7 +2004,6 @@ function buildAgentTreeFromEntries(
       usage = addUsage(usage, u);
       const ctx = contextSize(u);
       peak = Math.max(peak, ctx);
-      if (isTimelineAssistantTurn(entry)) turns += 1;
       const delta =
         lastContext == null || totalTokens(u) === 0 ? null : ctx - lastContext;
       if (totalTokens(u) > 0) lastContext = ctx;
@@ -1687,7 +2021,7 @@ function buildAgentTreeFromEntries(
       const tools = blocks.filter((b) => b.type === "tool_use");
 
       const assistantNode: TreeNode = {
-        id: entry.uuid ?? `assistant-${assistantIndex}`,
+        id: nodeIds.get(sourced)!,
         kind: "assistant_message",
         label: tools.length ? `Assistant · ${tools.map((t) => t.name).join(", ")}` : "Assistant",
         timestamp: entry.timestamp ?? null,
@@ -1705,7 +2039,6 @@ function buildAgentTreeFromEntries(
         log,
         children: [],
       };
-      assistantIndex += 1;
 
       if (thinking) {
         assistantNode.children.push({
@@ -1729,10 +2062,7 @@ function buildAgentTreeFromEntries(
         const summary = toolInputPreview(name, tool.input);
         const inputPreview =
           summary ?? previewText(stringifyContent(tool.input), 160);
-        const isSubagent =
-          tool.name === "Task" ||
-          tool.name === "Agent" ||
-          tool.name === "TaskCreate";
+        const isSubagent = isSubagentLaunchTool(tool.name);
         const toolNode: TreeNode = {
           id: tool.id ?? `${assistantNode.id}-tool-${toolCalls}`,
           kind: "tool_call",
@@ -1831,6 +2161,7 @@ function buildAgentTreeFromEntries(
     contextAfter: peak || null,
     contextDelta: null,
   };
+  const turns = countRealTurns(sourcedEntries);
   return { tree: root, usage, peak, toolCalls, messages, turns, tools: toolCounts };
 }
 
@@ -1843,6 +2174,41 @@ function agentToolSummaries(
       (a, b) =>
         b.callCount - a.callCount || a.toolName.localeCompare(b.toolName),
     );
+}
+
+/**
+ * Human label for a subagent. Prefers the sidecar's `agentType` /
+ * `description` (e.g. `Explore · Scan token call sites`) and falls back to
+ * the opaque agentId when there is no sidecar.
+ */
+function subagentLabel(agentId: string, meta: SubagentMeta | null): string {
+  const agentType =
+    typeof meta?.agentType === "string" ? meta.agentType.trim() : "";
+  const description =
+    typeof meta?.description === "string" ? meta.description.trim() : "";
+  if (agentType && description) return `${agentType} · ${description}`;
+  if (agentType) return agentType;
+  if (description) return description;
+  return `Subagent · ${agentId}`;
+}
+
+/** Depth-first search for the subagent-launch tool node carrying this id. */
+function findSubagentLaunchNode(
+  node: TreeNode,
+  toolUseId: string,
+): TreeNode | undefined {
+  if (
+    node.kind === "tool_call" &&
+    isSubagentLaunchTool(node.toolName) &&
+    node.toolUseId === toolUseId
+  ) {
+    return node;
+  }
+  for (const child of node.children) {
+    const hit = findSubagentLaunchNode(child, toolUseId);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 export function buildSessionDetail(
@@ -1869,7 +2235,8 @@ export function buildSessionDetail(
     source: file.source,
   };
 
-  const rootBuild = buildAgentTreeFromEntries(parsed.entries, {
+  const nodeIds = computeAssistantNodeIds(parsed.entries);
+  const rootBuild = buildAgentTreeFromEntries(parsed.entries, nodeIds, {
     id: file.id,
     label: "Root agent",
     kind: "root_agent",
@@ -1894,32 +2261,83 @@ export function buildSessionDetail(
   // Attach subagent transcripts under matching Task tool calls when possible
   const taskToolNodes: TreeNode[] = [];
   const walk = (n: TreeNode) => {
-    if (
-      n.kind === "tool_call" &&
-      (n.toolName === "Task" || n.toolName === "Agent" || n.toolName === "TaskCreate")
-    ) {
+    if (n.kind === "tool_call" && isSubagentLaunchTool(n.toolName)) {
       taskToolNodes.push(n);
     }
     for (const c of n.children) walk(c);
   };
   walk(rootBuild.tree);
 
-  for (const [index, sub] of parsed.subagentFiles.entries()) {
+  const subagentByToolUseId = new Map<string, AgentBreakdownRow>();
+  // Subagent timelines whose points launched a further subagent, filled in
+  // after the loop below has registered every subagent's row.
+  const deferredLaunchFills: {
+    points: ContextTimelinePoint[];
+    launchIds: Map<string, string[]>;
+  }[] = [];
+  // One `SessionAgent` per subagent transcript, in `loadSubagents` order
+  // (parent-first), appended after the root agent's entry below.
+  const subagentAgents: SessionAgent[] = [];
+  // Subtrees of subagents already attached this pass, so a `spawnDepth >= 2`
+  // subagent can find the Task node inside its parent. `loadSubagents` sorts
+  // parent-first, so the parent is always present by the time a child looks.
+  const subagentTreeByAgentId = new Map<string, TreeNode>();
+  // Task nodes already handed to a subagent, plus the ids some sidecar names.
+  // The positional fallback must skip both, or a sidecar-less subagent would
+  // land on a node a sidecar claims — both subtrees under one node, and the
+  // second row overwriting the first in `subagentByToolUseId`. Sidecar claims
+  // are collected up front because file order decides nothing here: the
+  // sidecar-less subagent may well be visited first.
+  const consumedTaskNodes = new Set<TreeNode>();
+  const sidecarClaimedToolUseIds = new Set<string>();
+  for (const sub of parsed.subagentFiles) {
+    if (typeof sub.meta?.toolUseId === "string" && sub.meta.toolUseId) {
+      sidecarClaimedToolUseIds.add(sub.meta.toolUseId);
+    }
+  }
+  // Advances only when a subagent actually falls back to positional pairing,
+  // so sidecar-matched subagents don't consume a slot.
+  let positionalIndex = 0;
+
+  for (const sub of parsed.subagentFiles) {
     const subModel =
       [...sub.entries]
         .reverse()
         .find((s) => s.entry.type === "assistant" && s.entry.message?.model)
         ?.entry.message?.model ?? null;
-    const built = buildAgentTreeFromEntries(sub.entries, {
+    const label = subagentLabel(sub.agentId, sub.meta);
+    const subNodeIds = computeAssistantNodeIds(sub.entries);
+    const built = buildAgentTreeFromEntries(sub.entries, subNodeIds, {
       id: sub.agentId,
-      label: `Subagent · ${sub.agentId}`,
+      label,
       kind: "subagent",
       model: subModel,
     });
+    // Per-agent turns and tool attribution, scoped to this transcript only:
+    // a subagent's tool calls are absent from the root `toolImpact`, which is
+    // built from `parsed.entries` alone. `groupIntoTurns` is already memoized
+    // for `sub.entries` (the tree build above walked them), so the timeline
+    // costs no extra grouping pass.
+    const { points: subTimeline, subagentToolUseIds: subLaunchIds } =
+      buildTimeline(sub.entries, subNodeIds);
+    const { rows: subToolImpact, byTurn: subByTurn } = buildToolImpact(
+      sub.entries,
+      subNodeIds,
+    );
+    for (const point of subTimeline) {
+      point.causedBy = point.memberNodeIds.flatMap(
+        (id) => subByTurn.get(id) ?? [],
+      );
+    }
+    // A nested subagent's own row is only registered later in this loop, so
+    // its parent's launch summaries have to wait until every row exists.
+    if (subLaunchIds.size > 0) {
+      deferredLaunchFills.push({ points: subTimeline, launchIds: subLaunchIds });
+    }
 
-    agentBreakdown.push({
+    const row: AgentBreakdownRow = {
       agentId: sub.agentId,
-      label: `Subagent · ${sub.agentId}`,
+      label,
       kind: "subagent",
       model: subModel,
       usage: built.usage,
@@ -1928,12 +2346,78 @@ export function buildSessionDetail(
       messageCount: built.messages,
       turnCount: built.turns,
       tools: agentToolSummaries(built.tools),
+    };
+    agentBreakdown.push(row);
+    subagentTreeByAgentId.set(sub.agentId, built.tree);
+
+    const metaToolUseId =
+      typeof sub.meta?.toolUseId === "string" && sub.meta.toolUseId
+        ? sub.meta.toolUseId
+        : null;
+    const metaParentAgentId =
+      typeof sub.meta?.parentAgentId === "string" && sub.meta.parentAgentId
+        ? sub.meta.parentAgentId
+        : null;
+    const metaAgentType =
+      typeof sub.meta?.agentType === "string" && sub.meta.agentType.trim()
+        ? sub.meta.agentType.trim()
+        : null;
+    const metaDescription =
+      typeof sub.meta?.description === "string" && sub.meta.description.trim()
+        ? sub.meta.description.trim()
+        : null;
+
+    subagentAgents.push({
+      agentId: sub.agentId,
+      kind: "subagent",
+      label,
+      agentType: metaAgentType,
+      description: metaDescription,
+      parentAgentId: metaParentAgentId,
+      launchToolUseId: metaToolUseId,
+      spawnDepth: spawnDepthOf(sub.meta),
+      timeline: subTimeline,
+      toolImpact: subToolImpact,
     });
 
-    const target = taskToolNodes[index];
+    // 1. Exact sidecar join: the Task call this subagent was launched from.
+    let target = metaToolUseId
+      ? taskToolNodes.find((n) => n.toolUseId === metaToolUseId)
+      : undefined;
+
+    // 2. Nested subagent: its launching Task node lives in the parent
+    //    subagent's subtree, not in the root transcript.
+    if (!target && metaParentAgentId) {
+      const parentTree = subagentTreeByAgentId.get(metaParentAgentId);
+      if (parentTree) {
+        target =
+          (metaToolUseId
+            ? findSubagentLaunchNode(parentTree, metaToolUseId)
+            : undefined) ?? parentTree;
+      }
+    }
+
+    // 3. Positional fallback for transcripts written without sidecars.
+    if (!target) {
+      while (positionalIndex < taskToolNodes.length) {
+        const candidate = taskToolNodes[positionalIndex]!;
+        const claimed =
+          consumedTaskNodes.has(candidate) ||
+          (candidate.toolUseId != null &&
+            sidecarClaimedToolUseIds.has(candidate.toolUseId));
+        if (!claimed) break;
+        positionalIndex += 1;
+      }
+      target = taskToolNodes[positionalIndex];
+      if (target) positionalIndex += 1;
+    }
+
     if (target) {
+      consumedTaskNodes.add(target);
       target.children.push(built.tree);
+      if (target.toolUseId) subagentByToolUseId.set(target.toolUseId, row);
     } else {
+      // 4. No Task node to hang it on at all.
       rootBuild.tree.children.push(built.tree);
     }
   }
@@ -1945,15 +2429,66 @@ export function buildSessionDetail(
     // look at preview / leave as tool with results only
   }
 
-  const timeline = buildTimeline(parsed.entries);
+  const { points: timeline, subagentToolUseIds } = buildTimeline(
+    parsed.entries,
+    nodeIds,
+  );
+  const { rows: toolImpact, byTurn } = buildToolImpact(parsed.entries, nodeIds);
+
+  for (const point of timeline) {
+    point.causedBy = point.memberNodeIds.flatMap((id) => byTurn.get(id) ?? []);
+  }
+  fillSubagentLaunches(timeline, subagentToolUseIds, subagentByToolUseId);
+  for (const fill of deferredLaunchFills) {
+    fillSubagentLaunches(fill.points, fill.launchIds, subagentByToolUseId);
+  }
+
+  const { loadedContext, logLines } = buildLoadedContext(
+    parsed.entries,
+    timeline,
+    nodeIds,
+  );
+
+  const agents: SessionAgent[] = [
+    {
+      agentId: file.id,
+      kind: "root_agent",
+      label: "Root agent",
+      agentType: null,
+      description: null,
+      parentAgentId: null,
+      launchToolUseId: null,
+      spawnDepth: 0,
+      timeline,
+      toolImpact,
+    },
+    ...subagentAgents,
+  ];
+
+  // Each timeline point embeds the full JSONL line of its last assistant
+  // entry (and of its opening prompt). Root points keep it — `detail.timeline`
+  // is the same array — but on subagent points, of which there can be dozens
+  // per session, move the text into the shared `logLines` dictionary instead,
+  // the same convention `snapshotInventory` uses for loadedContext evidence.
+  for (const agent of agents) {
+    if (agent.kind === "root_agent") continue;
+    for (const point of agent.timeline) {
+      point.log = stashLogLine(point.log, logLines);
+      if (point.promptLog) {
+        point.promptLog = stashLogLine(point.promptLog, logLines);
+      }
+    }
+  }
 
   return {
     meta,
     tree: rootBuild.tree,
     timeline,
-    toolImpact: buildToolImpact(parsed.entries),
+    toolImpact,
     agentBreakdown,
-    loadedContext: buildLoadedContext(parsed.entries, timeline),
+    agents,
+    loadedContext,
+    logLines,
   };
 }
 

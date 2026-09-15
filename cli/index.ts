@@ -17,7 +17,9 @@ Commands:
                         (defaults to the most recently updated session)
 
 Options for serve:
-  -p, --port <number>   Port to listen on (default: 8787, or $PORT)
+  -p, --port <number>   Port to listen on (default: 8788, or $PORT)
+                        If busy: an explicit --port fails; the default/$PORT
+                        falls back to the next available port
   -H, --host <host>     Hostname to bind (default: 127.0.0.1)
 
 Options for analyze:
@@ -125,6 +127,7 @@ async function main(): Promise<void> {
     await startServer({
       port,
       host: values.host,
+      strictPort: port !== undefined,
     });
     return;
   }

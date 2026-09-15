@@ -3,9 +3,10 @@ import { useTheme } from "@mui/material/styles";
 import { Box, Button, Chip, Collapse, Stack, Typography } from "@mui/material";
 import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
 import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
-import type { TokenUsage, TreeNode } from "@shared/types";
+import type { TreeNode } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
 import { kindLabel } from "../lib/api";
+import { metricsTitle, usageParts } from "../lib/contextUsageParts";
 import {
   collectExpandableIds,
   collectExpandableIdsBelowDepth,
@@ -16,7 +17,7 @@ import {
   schemeAlpha,
   schemePalette,
 } from "../theme";
-import { ExpandableRow } from "./ui";
+import { ExpandableRow, TaggedText } from "./ui";
 
 /** Open only the root by default (collapse everything below level 1). */
 const DEFAULT_OPEN_MAX_DEPTH = 1;
@@ -38,37 +39,6 @@ interface NodeProps {
   focusedNodeId: string | null;
   onFocusNode?: (nodeId: string) => void;
   onViewLog?: (node: TreeNode) => void;
-}
-
-function usageParts(u: TokenUsage): string | null {
-  const parts: string[] = [];
-  if (u.inputTokens > 0) parts.push(`in ${formatTokens(u.inputTokens)}`);
-  if (u.cacheCreationInputTokens > 0) {
-    parts.push(`cache+ ${formatTokens(u.cacheCreationInputTokens)}`);
-  }
-  if (u.cacheReadInputTokens > 0) {
-    parts.push(`cache ${formatTokens(u.cacheReadInputTokens)}`);
-  }
-  if (u.outputTokens > 0) parts.push(`out ${formatTokens(u.outputTokens)}`);
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-function metricsTitle(node: TreeNode): string | undefined {
-  if (node.usage && totalTokens(node.usage) > 0) {
-    const parts = usageParts(node.usage);
-    return [
-      "API usage for this turn (not a sum of child +N chips).",
-      "ctx = window occupancy from input + cache tokens.",
-      "Child +N values are estimated tool I/O sizes only.",
-      parts ? `Breakdown: ${parts}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-  if (node.context && node.context.addedTokens > 0 && node.context.contextAfter == null) {
-    return "Estimated tokens for this tool input/result (~4 chars per token). Not the same as assistant ctx occupancy.";
-  }
-  return undefined;
 }
 
 function HierarchyTreeNode({
@@ -170,7 +140,7 @@ function HierarchyTreeNode({
         body={
           <Box>
             <Typography variant="subtitle2" sx={{ fontSize: { xs: "0.85rem", sm: "0.9rem" }, wordBreak: "break-word" }}>
-              {node.label}
+              <TaggedText value={node.label} />
             </Typography>
             {node.preview ? (
               <Typography
@@ -186,7 +156,7 @@ function HierarchyTreeNode({
                   overflow: "hidden",
                 }}
               >
-                {node.preview}
+                <TaggedText value={node.preview} />
               </Typography>
             ) : null}
           </Box>

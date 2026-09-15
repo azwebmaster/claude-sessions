@@ -18,7 +18,6 @@ import CheckCircleOutlinedIcon from "@mui/icons-material/CheckCircleOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import {
   ANALYZE_MODEL_ALIASES,
-  DEFAULT_ANALYZE_MODEL_ALIAS,
   type AnalysisSeverity,
   type AnalyzeModelAlias,
   type AnalyzeProgressEvent,
@@ -32,6 +31,7 @@ import {
 } from "@shared/formatAnalysisPrompt";
 import { EmptyState, SectionPaper } from "./ui";
 import { apiAnalyzeStream, apiGetCachedAnalysis } from "../lib/api";
+import { formatElapsed } from "../lib/contextUsageParts";
 
 const MODEL_LABELS: Record<AnalyzeModelAlias, string> = {
   opus: "Opus",
@@ -58,6 +58,9 @@ const STAGE_ORDER = STAGE_LABELS.map((s) => s.stage);
 
 interface Props {
   sessionId: string;
+  /** Held by the caller so it can live in the URL. */
+  model: AnalyzeModelAlias;
+  onModelChange: (model: AnalyzeModelAlias) => void;
 }
 
 function severityColor(
@@ -68,19 +71,16 @@ function severityColor(
   return "info";
 }
 
-function formatElapsed(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
-}
-
 function stageIndex(stage: AnalyzeProgressStage | null): number {
   if (!stage) return -1;
   return STAGE_ORDER.indexOf(stage);
 }
 
-export function SessionAnalysisPanel({ sessionId }: Props) {
+export function SessionAnalysisPanel({
+  sessionId,
+  model,
+  onModelChange,
+}: Props) {
   const [analysis, setAnalysis] = useState<SessionAnalysis | null>(null);
   const [fromCache, setFromCache] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,9 +94,6 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
   );
   const [copiedRecIndex, setCopiedRecIndex] = useState<number | null>(null);
   const [recCopyFailed, setRecCopyFailed] = useState(false);
-  const [model, setModel] = useState<AnalyzeModelAlias>(
-    DEFAULT_ANALYZE_MODEL_ALIAS,
-  );
   const abortRef = useRef<AbortController | null>(null);
   const hydrateAbortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
@@ -330,7 +327,7 @@ export function SessionAnalysisPanel({ sessionId }: Props) {
               value={model}
               disabled={loading}
               onChange={(_e, value: AnalyzeModelAlias | null) => {
-                if (value != null) setModel(value);
+                if (value != null) onModelChange(value);
               }}
               aria-label="Analyze model"
               sx={{ width: { xs: "100%", sm: "auto" } }}

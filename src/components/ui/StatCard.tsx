@@ -12,13 +12,13 @@ export function StatCard({ label, value }: StatCardProps) {
         bgcolor: "action.hover",
         border: 1,
         borderColor: "divider",
-        borderRadius: 1.5,
-        px: { xs: 1.25, sm: 1.5 },
-        py: { xs: 1, sm: 1.25 },
+        borderRadius: 1.25,
+        px: { xs: 1, sm: 1.15 },
+        py: { xs: 0.65, sm: 0.8 },
         minWidth: 0,
         display: "flex",
         flexDirection: "column",
-        gap: 0.35,
+        gap: 0.15,
       }}
     >
       <Typography
@@ -27,9 +27,9 @@ export function StatCard({ label, value }: StatCardProps) {
         color="text.secondary"
         sx={{
           display: "block",
-          fontSize: { xs: "0.6rem", sm: "0.68rem" },
-          lineHeight: 1.25,
-          letterSpacing: "0.04em",
+          fontSize: { xs: "0.56rem", sm: "0.62rem" },
+          lineHeight: 1.2,
+          letterSpacing: "0.03em",
         }}
       >
         {label}
@@ -40,9 +40,9 @@ export function StatCard({ label, value }: StatCardProps) {
         title={value}
         sx={{
           display: "block",
-          fontSize: { xs: "0.95rem", sm: "1.05rem" },
+          fontSize: { xs: "0.85rem", sm: "0.92rem" },
           fontWeight: 600,
-          lineHeight: 1.2,
+          lineHeight: 1.15,
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",

@@ -2,7 +2,14 @@ import { Box, Stack, Typography } from "@mui/material";
 import { Route, Routes } from "react-router-dom";
 import { ColorModeToggle } from "./components/ui";
 import { SessionListPage } from "./pages/SessionListPage";
-import { SessionDetailPage } from "./pages/SessionDetailPage";
+import {
+  SessionIndexRedirect,
+  SessionWorkspace,
+} from "./pages/SessionWorkspace";
+import { TurnsView } from "./pages/session/TurnsView";
+import { ToolsView } from "./pages/session/ToolsView";
+import { AnalysisView } from "./pages/session/AnalysisView";
+import { TranscriptView } from "./pages/session/TranscriptView";
 import { keyframes, layout, motion } from "./theme";
 
 export function App() {
@@ -75,7 +82,14 @@ export function App() {
       </Stack>
       <Routes>
         <Route path="/" element={<SessionListPage />} />
-        <Route path="/sessions/:id" element={<SessionDetailPage />} />
+        <Route path="/sessions/:id" element={<SessionWorkspace />}>
+          <Route index element={<SessionIndexRedirect />} />
+          <Route path="turns/:turn" element={<TurnsView />} />
+          <Route path="agents/:agentId/turns/:turn" element={<TurnsView />} />
+          <Route path="tools" element={<ToolsView />} />
+          <Route path="analysis" element={<AnalysisView />} />
+          <Route path="transcript" element={<TranscriptView />} />
+        </Route>
       </Routes>
     </Box>
   );

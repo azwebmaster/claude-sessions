@@ -1,4 +1,4 @@
-import type { TreeNode } from "@shared/types";
+import type { ContextTimelinePoint, LogLineRef, TreeNode } from "@shared/types";
 
 /** Ids of nodes that have children (can expand/collapse), depth-first. */
 export function collectExpandableIds(root: TreeNode): string[] {
@@ -43,18 +43,6 @@ export function findAncestorIds(
   return null;
 }
 
-export function findNode(
-  root: TreeNode,
-  targetId: string,
-): TreeNode | null {
-  if (root.id === targetId) return root;
-  for (const child of root.children) {
-    const found = findNode(child, targetId);
-    if (found) return found;
-  }
-  return null;
-}
-
 /** Path from root to the target node (inclusive), or null if not found. */
 export function findNodePath(
   root: TreeNode,
@@ -87,83 +75,104 @@ export function findOwningAgentId(
   return null;
 }
 
-/**
- * Hierarchy node id for a tool invocation, matching `toolUseId` or the node id
- * itself when they coincide.
- */
-export function findToolCallNodeId(
-  root: TreeNode,
-  toolUseId: string,
-): string | null {
-  if (
-    root.kind === "tool_call" &&
-    (root.toolUseId === toolUseId || root.id === toolUseId)
-  ) {
-    return root.id;
-  }
-  for (const child of root.children) {
-    const found = findToolCallNodeId(child, toolUseId);
-    if (found) return found;
-  }
-  return null;
+/** A single `tool_call` node flattened out of the tree, with its owning
+ * agent/turn resolved during descent (see `collectSteps`). */
+export interface StepEntry {
+  nodeId: string;
+  toolName: string;
+  agentId: string;
+  agentLabel: string;
+  /** Id of the enclosing `assistant_message` (turn) node, for grouping. */
+  turnNodeId: string | null;
+  timestamp: string | null;
+  preview: string | null;
+  log: LogLineRef | null;
+  addedTokens: number;
+  /**
+   * The `tool_use` block's own id, when the transcript supplied one. Null for
+   * a synthesized `${assistant}-tool-N` node id; `nodeId` always exists, so
+   * that is what URLs carry.
+   */
+  toolUseId: string | null;
+  /**
+   * JSONL line of this call's `tool_result` child — the user entry holding the
+   * complete result text, not the `TOOL_RESULT_PREVIEW_CAP`-capped
+   * `ToolImpactCall.resultPreview`.
+   */
+  resultLog: LogLineRef | null;
+  /** The `tool_result` child node's own preview, independent of `toolImpact`. */
+  resultNodePreview: string | null;
+  /** agentId of a `subagent` child (a Task launch), for drill-in. */
+  subagentId: string | null;
 }
 
 /**
- * First tool_call node id whose `toolName` matches.
- * When `agentId` is set, search only that agent's own turns — nested
- * subagent trees are skipped so parent agents are not attributed child tools.
+ * Every `tool_call` node in the tree, depth-first, subagents included.
+ * A subagent's own turns/steps are attributed to the subagent (not the
+ * turn that launched it) — the owning turn resets on entering `subagent`.
  */
-export function findFirstToolCallByName(
-  root: TreeNode,
-  toolName: string,
-  agentId?: string | null,
-): string | null {
-  if (agentId != null && agentId !== "") {
-    const scope = findAgentSubtree(root, agentId);
-    if (!scope) return null;
-    return findFirstToolCallByNameIn(scope, toolName, true);
-  }
-  return findFirstToolCallByNameIn(root, toolName, false);
-}
+export function collectSteps(root: TreeNode): StepEntry[] {
+  const steps: StepEntry[] = [];
 
-function findAgentSubtree(
-  root: TreeNode,
-  agentId: string,
-): TreeNode | null {
-  if (
-    (root.kind === "root_agent" || root.kind === "subagent") &&
-    (root.agentId === agentId || root.id === agentId)
-  ) {
-    return root;
-  }
-  for (const child of root.children) {
-    const found = findAgentSubtree(child, agentId);
-    if (found) return found;
-  }
-  return null;
-}
+  function walk(
+    node: TreeNode,
+    agentId: string,
+    agentLabel: string,
+    turnNodeId: string | null,
+  ): void {
+    let nextAgentId = agentId;
+    let nextAgentLabel = agentLabel;
+    let nextTurnNodeId = turnNodeId;
 
-function findFirstToolCallByNameIn(
-  root: TreeNode,
-  toolName: string,
-  skipNestedAgents: boolean,
-): string | null {
-  if (root.kind === "tool_call" && root.toolName === toolName) {
-    return root.id;
-  }
-  for (const child of root.children) {
-    if (
-      skipNestedAgents &&
-      (child.kind === "subagent" || child.kind === "root_agent")
-    ) {
-      continue;
+    if (node.kind === "root_agent" || node.kind === "subagent") {
+      nextAgentId = node.agentId ?? node.id;
+      nextAgentLabel = node.label;
+      nextTurnNodeId = null;
+    } else if (node.kind === "assistant_message") {
+      nextTurnNodeId = node.id;
+    } else if (node.kind === "tool_call") {
+      const result = node.children.find((c) => c.kind === "tool_result");
+      const subagent = node.children.find((c) => c.kind === "subagent");
+      steps.push({
+        nodeId: node.id,
+        toolName: node.toolName ?? "tool",
+        agentId,
+        agentLabel,
+        turnNodeId,
+        timestamp: node.timestamp,
+        preview: node.preview,
+        log: node.log,
+        addedTokens: node.context?.addedTokens ?? 0,
+        toolUseId: node.toolUseId ?? null,
+        resultLog: result?.log ?? null,
+        resultNodePreview: result?.preview ?? null,
+        subagentId: subagent ? (subagent.agentId ?? subagent.id) : null,
+      });
     }
-    const found = findFirstToolCallByNameIn(
-      child,
-      toolName,
-      skipNestedAgents,
-    );
-    if (found) return found;
+
+    for (const child of node.children) {
+      walk(child, nextAgentId, nextAgentLabel, nextTurnNodeId);
+    }
   }
-  return null;
+
+  walk(root, "", "", null);
+  return steps;
+}
+
+/**
+ * Resolve a focused node id to its index in `points`. A Step's `tool_call`
+ * node id never matches a timeline point directly — it's resolved to its
+ * owning turn (via `steps`) first, so a Step click focuses the same turn as
+ * clicking that turn directly.
+ */
+export function findTimelineIndexForNode(
+  points: ContextTimelinePoint[],
+  steps: StepEntry[],
+  nodeId: string,
+): number {
+  const step = steps.find((s) => s.nodeId === nodeId);
+  const turnNodeId = step?.turnNodeId ?? nodeId;
+  return points.findIndex(
+    (p) => p.nodeId === turnNodeId || p.memberNodeIds.includes(turnNodeId),
+  );
 }

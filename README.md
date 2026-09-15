@@ -20,8 +20,8 @@ Demo fixtures under `fixtures/projects` are always included so the UI works with
 
 ```bash
 pnpm install
-pnpm dev          # API on http://127.0.0.1:8787
-pnpm dev:client   # UI on http://127.0.0.1:5173 (proxies /api)
+pnpm dev          # API on http://127.0.0.1:8788
+pnpm dev:client   # UI on http://127.0.0.1:5174 (proxies /api)
 ```
 
 Or run both:
@@ -52,7 +52,7 @@ Options:
 
 ```bash
 claude-sessions serve --port 3000
-claude-sessions serve -H 0.0.0.0 -p 8787
+claude-sessions serve -H 0.0.0.0 -p 8788
 claude-sessions analyze                 # most recently updated session
 claude-sessions analyze <session-uuid>
 claude-sessions analyze --model haiku

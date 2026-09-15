@@ -416,6 +416,51 @@ describe("analyzeSession", () => {
     assert.equal(seenPath, "/usr/local/bin/claude");
   });
 
+  it("allows multiple turns and the Task tool for subagent delegation", async () => {
+    const detail = await loadFixtureDetail();
+    let seenMaxTurns: number | undefined;
+    let seenTools: string[] | undefined;
+    let seenAllowedTools: string[] | undefined;
+    await analyzeSession(detail, {
+      loadExtras: async () => ({ info: null, messages: [] }),
+      resolveExecutable: () => undefined,
+      runner: async function* ({ options }) {
+        seenMaxTurns = options?.maxTurns;
+        seenTools = options?.tools as string[] | undefined;
+        seenAllowedTools = options?.allowedTools as string[] | undefined;
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          is_error: false,
+          num_turns: 1,
+          result: "",
+          stop_reason: "end_turn",
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          structured_output: {
+            summary: "Used multi-turn tools.",
+            findings: [],
+            recommendations: [],
+          },
+          uuid: "00000000-0000-0000-0000-000000000021",
+          session_id: "analysis-session",
+        } as unknown as SDKMessage;
+      },
+    });
+    assert.equal(seenMaxTurns, 10);
+    assert.deepEqual(seenTools, ["Task", "Read", "Grep", "Glob"]);
+    assert.deepEqual(seenAllowedTools, ["Task", "Read", "Grep", "Glob"]);
+  });
+
   it("inherits user settings and host env for system auth", async () => {
     const detail = await loadFixtureDetail();
     let seenSources: string[] | undefined;
@@ -466,7 +511,6 @@ describe("analyzeSession", () => {
     assert.equal(seenEnv?.CLAUDE_CODE_OAUTH_TOKEN, "oauth-test");
     assert.equal(seenEnv?.HOME, "/tmp/claude-home");
     assert.equal(seenEnv?.CLAUDE_AGENT_SDK_CLIENT_APP, "claude-sessions");
-    assert.equal(seenEnv?.DISABLE_PROMPT_CACHING, "1");
   });
 
   it("buildAnalyzeEnv fills HOME when missing", () => {
@@ -474,16 +518,15 @@ describe("analyzeSession", () => {
     assert.ok(env.HOME && env.HOME.length > 0);
     assert.equal(env.PATH, "/bin");
     assert.equal(env.CLAUDE_AGENT_SDK_CLIENT_APP, "claude-sessions");
-    assert.equal(env.DISABLE_PROMPT_CACHING, "1");
   });
 
-  it("buildAnalyzeEnv disables prompt caching even when inherited", () => {
+  it("buildAnalyzeEnv leaves prompt caching enabled (does not force-disable it)", () => {
     const env = buildAnalyzeEnv({
       PATH: "/bin",
       HOME: "/home/user",
       DISABLE_PROMPT_CACHING: "0",
     });
-    assert.equal(env.DISABLE_PROMPT_CACHING, "1");
+    assert.equal(env.DISABLE_PROMPT_CACHING, "0");
   });
 
   it("continues when loadExtras hangs past its budget", async () => {

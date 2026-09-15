@@ -2,6 +2,7 @@ import type {
   AnalyzeModelAlias,
   AnalyzeStreamEvent,
   SessionAnalysis,
+  SessionRawInfo,
 } from "@shared/types";
 
 async function readError(res: Response): Promise<string> {
@@ -16,18 +17,28 @@ async function readError(res: Response): Promise<string> {
   return body;
 }
 
-export async function api<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+export type ApiPostOptions = {
+  /** AbortSignal for cancellation / client-side timeout. */
+  signal?: AbortSignal;
+};
+
+export async function api<T>(
+  path: string,
+  options: ApiPostOptions = {},
+): Promise<T> {
+  const res = await fetch(path, { signal: options.signal });
   if (!res.ok) {
     throw new Error(await readError(res));
   }
   return res.json() as Promise<T>;
 }
 
-export type ApiPostOptions = {
-  /** AbortSignal for cancellation / client-side timeout. */
-  signal?: AbortSignal;
-};
+export async function apiSessionRaw(
+  id: string,
+  options: ApiPostOptions = {},
+): Promise<SessionRawInfo> {
+  return api<SessionRawInfo>(`/api/sessions/${id}/raw`, options);
+}
 
 export async function apiPost<T>(
   path: string,

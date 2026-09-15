@@ -132,9 +132,6 @@ export function buildAnalyzeEnv(
   if (!env.CLAUDE_AGENT_SDK_CLIENT_APP?.trim()) {
     env.CLAUDE_AGENT_SDK_CLIENT_APP = "claude-sessions";
   }
-  // Single-turn analyze never reuses the prompt prefix, so cache writes only
-  // raise input cost (cache_creation) with no later cache_read benefit.
-  env.DISABLE_PROMPT_CACHING = "1";
   return env;
 }
 
@@ -209,7 +206,9 @@ export function analysisJsonSchema(): Record<string, unknown> {
 
 const ANALYZER_SYSTEM_PROMPT = `You are a Claude Code session profiler. Given a compact profile of one local agent session, identify context bloat, expensive tool patterns, and concrete ways to shrink token usage and peak context.
 
-Be specific and practical. Prefer findings grounded in the provided metrics (tool impact, peak context, cache behavior, subagents). Do not invent file contents or tool results that are not in the brief.`;
+Be specific and practical. Prefer findings grounded in the provided metrics (tool impact, peak context, cache behavior, subagents). Do not invent file contents or tool results that are not in the brief.
+
+Minimize your own context and token usage: reuse the brief instead of re-deriving facts already in it. If you have multiple independent sub-investigations to run (e.g. reading or searching files in the project directory), delegate them to subagents via the Task tool rather than doing them serially yourself. When you do use tools, batch independent tool calls together in a single turn rather than running them one at a time.`;
 
 export interface SdkSessionExtras {
   info: SDKSessionInfo | null;
@@ -454,7 +453,8 @@ function classifyRunnerError(err: unknown): AnalyzeSessionError {
 
 /**
  * Profile a session with the Claude Agent SDK: enrich via session APIs,
- * then run a single-turn structured `query()` for optimization advice.
+ * then run a structured `query()` (up to 10 turns, with the Task tool
+ * available for subagent delegation) for optimization advice.
  *
  * Bounds the run with a hard wall-clock timeout plus an idle timeout that
  * resets on progress / SDK activity — the Agent SDK can hang forever when the
@@ -606,9 +606,12 @@ export async function analyzeSession(
 
       const queryOptions: Options = {
         model,
-        maxTurns: 1,
-        tools: [],
-        allowedTools: [],
+        maxTurns: 10,
+        // Task-spawned subagents inherit this tool set (no `agents` option is
+        // set, so they get the parent's tools), so they need real read-only
+        // tools to investigate rather than only being able to re-delegate.
+        tools: ["Task", "Read", "Grep", "Glob"],
+        allowedTools: ["Task", "Read", "Grep", "Glob"],
         // Load user settings so apiKeyHelper / settings env auth matches the
         // interactive CLI. Skip project/local to avoid CLAUDE.md and project MCP.
         settingSources: ["user"],

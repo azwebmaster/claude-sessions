@@ -1,0 +1,322 @@
+# 004 — Bump `hono` and `react-router-dom` to close known CVEs
+
+## Status
+
+- **Priority:** P1
+- **Effort:** S
+- **Risk:** Low
+- **Depends on:** none (independent of plan 003, but plan 003 removes the
+  one call site — `cors()` — that exercises one of the two `hono` advisories
+  fixed here; doing both is still correct, since this plan also fixes
+  advisories unrelated to CORS)
+- **Category:** Dependencies
+- **Planned at commit:** `3aac79e`
+- **Issue:** (none filed)
+
+## Why this matters
+
+`pnpm audit --prod` (run against the repo as of commit `3aac79e`) reports
+**20 vulnerabilities: 8 high, 11 moderate, 1 low**. Two direct dependencies
+account for advisories with a straightforward, low-risk fix — a version
+bump, no code change:
+
+**`hono`** — declared `^4.8.3` in `package.json`, resolves to `4.12.30`
+(confirmed via `pnpm why hono`). Advisories affecting the installed
+`4.12.30` include (non-exhaustive, from the audit run):
+- `GHSA-79qm-7rj5-m7r9` — low — Proxy Helper doesn't strip `Connection`-listed
+  response headers. Fixed in `>=4.12.34`.
+- A moderate ReDoS in the **CORS middleware** (`hono: ReDoS in CORS
+  middleware`) — directly relevant since `server/app.ts:41` calls
+  `cors()` (see plan 003 in this same `plans/` directory, which removes that
+  call site entirely; this plan's version bump is a defense-in-depth fix
+  independent of whether plan 003 has been executed).
+- Several other moderate advisories (algorithmic-complexity DoS in the
+  language-negotiation middleware, an incomplete `toSSG()` fix, unbounded
+  dot-notation nesting in `parseBody()`, a query-parser issue, a Node.js
+  adapter path-traversal issue) — this app doesn't call most of these
+  middlewares directly, but they ship as part of the `hono` package this
+  app depends on, and a version bump closes all of them at once for the
+  cost of a `package.json` edit.
+
+Latest `hono` at the time this plan was written: `4.13.7` (via
+`pnpm view hono version`). `@hono/node-server`'s installed version
+(`1.19.14`, confirmed via `pnpm why hono`) declares `"hono": "^4.4.10"` in
+its own `dependencies` and `"hono": "^4"` as a `peerDependency` — both
+ranges are satisfied by `4.13.7`, so no other package needs to change to
+accommodate this bump.
+
+**`react-router-dom`** — declared `^7.6.3`, resolves to `7.18.1`. One
+advisory: `GHSA-qwww-vcr4-c8h2` — "React Router: RSC Mode CSRF Bypass
+Allows Action Execution Before 400 Response" — affects `react-router`
+(the dependency underlying `react-router-dom`) versions `>=7.12.0 <7.18.2`.
+This app does not use React Server Components / RSC mode (confirmed: no
+`react-router`'s RSC-specific APIs — `unstable_RSCStaticRouter`,
+`createFromReadableStream`, or similar — appear anywhere in `src/`, only
+standard client-side `<BrowserRouter>`-style APIs), so the vulnerable code
+path is not reachable by this app today. The fix is still a trivial,
+zero-risk version bump, so there's no reason to leave it unpatched.
+Latest `react-router-dom` at the time this plan was written: `7.18.3`.
+
+## Current state
+
+Relevant lines from `package.json`:
+
+```json
+"dependencies": {
+  "@anthropic-ai/claude-agent-sdk": "^0.3.211",
+  "@emotion/react": "^11.14.0",
+  "@emotion/styled": "^11.14.1",
+  "@hono/node-server": "^1.14.4",
+  "@mui/icons-material": "^9.2.0",
+  "@mui/material": "^9.2.0",
+  "hono": "^4.8.3",
+  "react": "^19.1.0",
+  "react-dom": "^19.1.0",
+  "react-router-dom": "^7.6.3",
+  "zod": "^4.4.3"
+},
+```
+
+Confirmed resolved (installed) versions and dependency chains:
+
+```
+$ pnpm why hono
+hono@4.12.30
+├─┬ @hono/node-server@1.19.14
+│ ├─┬ @modelcontextprotocol/sdk@1.29.0
+│ │ └─┬ @anthropic-ai/claude-agent-sdk@0.3.211
+│ │   └── claude-sessions@0.1.0 (dependencies)
+│ └── claude-sessions@0.1.0 (dependencies)
+├── @modelcontextprotocol/sdk@1.29.0 [deduped]
+└── claude-sessions@0.1.0 (dependencies)
+
+$ pnpm why react-router-dom
+react-router-dom@7.18.1
+└── claude-sessions@0.1.0 (dependencies)
+```
+
+Note `hono` is a **transitive** dependency of
+`@anthropic-ai/claude-agent-sdk` (via `@modelcontextprotocol/sdk` →
+`@hono/node-server`) as well as a **direct** dependency of this app — pnpm
+dedupes them to one installed copy as long as version ranges overlap
+(confirmed above: only "1 version of hono" resolved). Bumping the direct
+`package.json` entry raises the floor for both usages at once.
+
+`@hono/node-server`'s own declared requirement (from its installed
+`package.json`), confirming `4.13.x` satisfies it:
+
+```json
+"dependencies": {
+  "hono": "^4.4.10"
+},
+"peerDependencies": {
+  "hono": "^4"
+}
+```
+
+## Commands you will need
+
+| Purpose | Command |
+|---|---|
+| Reinstall after editing `package.json` | `pnpm install` |
+| Check resulting audit | `pnpm audit --prod` |
+| Confirm installed versions after bump | `pnpm why hono` and `pnpm why react-router-dom` |
+| Typecheck | `pnpm typecheck` |
+| Test | `pnpm test` |
+| Build | `pnpm build` |
+
+## Scope
+
+**In scope:**
+- `package.json` — bump the `hono` and `react-router-dom` version ranges.
+- `pnpm-lock.yaml` — regenerated by `pnpm install` as a side effect of the
+  `package.json` change (per this repo's own CLAUDE.md-equivalent rule:
+  "Editing a dependency manifest → run the package manager install to
+  update the lock file" — do not skip this).
+
+**Out of scope — do not touch:**
+- Do not bump any other dependency in this pass — `@anthropic-ai/claude-agent-sdk`,
+  `@modelcontextprotocol/sdk`, and the transitive packages it pulls in
+  (`fast-uri`, `ip-address`, `qs`, `express-rate-limit`, etc.) are not
+  directly controlled by this repo's `package.json` and are out of scope for
+  this plan — bumping them requires bumping `@anthropic-ai/claude-agent-sdk`
+  itself, which is a separate, larger investigation (it may introduce
+  breaking API changes to the Agent SDK usage in `server/analyze.ts`) not
+  covered here.
+- Do not bump `vite`, `@vitejs/plugin-react`, or any devDependency — the
+  audit's `browserslist`/`nanoid`-via-`postcss` findings are devDependency-
+  only (build-time, not shipped, lower real risk) and were deliberately
+  deferred out of this round (see `plans/README.md`'s "considered and
+  rejected" section).
+- Do not change any application code. `react-router-dom`'s and `hono`'s
+  APIs used by this app (confirm via `grep -rn "from \"hono\|from \"react-router-dom\"" --include="*.ts*" server src shared cli`)
+  are stable, minor-version-compatible surfaces — this is a patch/minor
+  bump, not a major-version migration.
+
+## Git workflow
+
+1. Create a branch off `main`: `git checkout -b deps/bump-hono-react-router-dom`.
+2. Make the `package.json` edit, run `pnpm install`, and commit both
+   `package.json` and the regenerated `pnpm-lock.yaml` together as one
+   commit.
+3. Do not push or open a PR as part of this plan unless the person running
+   it tells you to — stop after the commit and report status.
+
+## Steps
+
+### Step 1 — Confirm current versions and usage surface
+
+Before changing anything, run:
+
+```
+pnpm why hono
+pnpm why react-router-dom
+grep -rn "from \"hono\|from \"react-router-dom\"" --include="*.ts*" server src shared cli
+```
+
+Compare the output to the "Current state" section above. If the resolved
+versions differ meaningfully from `4.12.30` / `7.18.1` (e.g. because
+`pnpm install` was run with a newer lockfile since this plan was written),
+that's fine — proceed with Step 2 using whatever the latest available
+patched versions are at execution time, not the specific numbers quoted in
+this plan. If the app's usage surface (the grep output) includes APIs not
+mentioned in "Why this matters" above, note them but proceed — this is a
+minor/patch bump within the same major version, so no API-usage change is
+expected.
+
+### Step 2 — Bump the version ranges in `package.json`
+
+Change:
+
+```json
+"hono": "^4.8.3",
+```
+
+to:
+
+```json
+"hono": "^4.13.7",
+```
+
+(or whatever the latest `4.x` version is at execution time, per Step 1 —
+use `pnpm view hono version` to check).
+
+Change:
+
+```json
+"react-router-dom": "^7.6.3",
+```
+
+to:
+
+```json
+"react-router-dom": "^7.18.3",
+```
+
+(or whatever the latest `7.x` version is at execution time — use
+`pnpm view react-router-dom version` to check). The minimum needed to close
+`GHSA-qwww-vcr4-c8h2` is `>=7.18.2`; prefer the latest `7.x` patch unless it
+introduces a changelog-documented breaking change.
+
+Do not change the `^` prefix convention or any other dependency's version
+in this same edit.
+
+**Verify:** the two lines above are the only lines changed in the
+`dependencies` block. `git diff package.json` should show exactly two
+changed lines (plus JSON formatting is unaffected).
+
+### Step 3 — Reinstall and regenerate the lockfile
+
+```
+pnpm install
+```
+
+**Verify:** exits 0. `git diff pnpm-lock.yaml` shows changes (the lockfile
+is expected to change — this is required, not optional, per this repo's own
+dependency-manifest convention).
+
+### Step 4 — Confirm the resolved versions and audit result
+
+```
+pnpm why hono
+pnpm why react-router-dom
+pnpm audit --prod
+```
+
+**Verify:** `pnpm why hono` reports `4.13.x` (or later); `pnpm why
+react-router-dom` reports `7.18.2` or later. `pnpm audit --prod`'s
+vulnerability count for advisories whose "Paths" column shows `.>hono` or
+`.>react-router-dom>react-router` (i.e. NOT the ones routed through
+`@anthropic-ai/claude-agent-sdk>@modelcontextprotocol/sdk`, which are out of
+scope per this plan) should now be zero. Some transitive advisories via the
+Agent SDK will remain — that's expected and out of scope (see above).
+
+### Step 5 — Full verification
+
+```
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+**Verify:** all three exit 0. `pnpm test` reports the same pass count as
+before this change (this is a dependency bump with no application-code
+change, so no test behavior should differ).
+
+## Test plan
+
+This plan makes no application-code change, so there is no new test to
+write. The test plan is the existing suite passing unchanged:
+
+```
+pnpm typecheck && pnpm test && pnpm build
+```
+
+If any existing test fails after the bump, that indicates an actual
+behavioral change in `hono` or `react-router-dom` between the old and new
+versions that affects this app — STOP (see below) rather than modifying the
+test to match new behavior, since the correct fix in that case depends on
+what specifically changed.
+
+## Done criteria
+
+- [ ] `package.json`'s `hono` entry is `^4.13.x` or later (any version
+      `>=4.13.5`, per the moderate/high CVEs' patched-version floor).
+- [ ] `package.json`'s `react-router-dom` entry is `^7.18.2` or later.
+- [ ] `pnpm-lock.yaml` is regenerated and committed alongside `package.json`.
+- [ ] `pnpm why hono` reports an installed version `>=4.13.5`.
+- [ ] `pnpm why react-router-dom` reports an installed version `>=7.18.2`.
+- [ ] `pnpm typecheck`, `pnpm test`, and `pnpm build` all exit 0.
+- [ ] `pnpm audit --prod` reports zero advisories whose "Paths" column is
+      exactly `.>hono` or `.>react-router-dom>react-router` (transitive
+      advisories via `@anthropic-ai/claude-agent-sdk` are expected to
+      remain and are out of scope).
+- [ ] `git diff --stat` shows changes in exactly 2 files: `package.json`
+      and `pnpm-lock.yaml`.
+
+## STOP conditions
+
+- If `pnpm install` reports a peer-dependency conflict involving `hono` or
+  `react-router-dom` that it cannot resolve, STOP and report the exact
+  error rather than forcing resolution with `--force` or a `.pnpmfile.cjs`
+  override.
+- If `pnpm typecheck` fails after the bump with errors pointing at
+  `hono`- or `react-router-dom`-typed code in `server/` or `src/`, STOP and
+  report the exact errors — this would mean the bump crossed a real breaking
+  API change not anticipated by this plan (both bumps were scoped as
+  same-major-version patch/minor bumps), and fixing call sites is a
+  different, larger change than this plan authorizes.
+- If any existing test fails after the bump, STOP and report which test and
+  the failure output — do not modify the failing test to make it pass
+  without understanding why the dependency bump changed its behavior.
+
+## Maintenance notes
+
+- Re-run `pnpm audit --prod` periodically (or wire it into CI — see plan
+  002, which could be extended with an audit step in a future round, though
+  that isn't part of this plan) to catch the next round of advisories before
+  they accumulate to 20 again.
+- The remaining transitive advisories (via `@anthropic-ai/claude-agent-sdk`
+  → `@modelcontextprotocol/sdk` → `fast-uri`/`ip-address`/`qs`/`express-rate-limit`)
+  need `@anthropic-ai/claude-agent-sdk` itself bumped to resolve — track that
+  as a separate follow-up, not silently folded into this plan.

@@ -34,7 +34,7 @@ export type CreateAppOptions = {
 export function createApp(options: CreateAppOptions = {}): Hono {
   const serveClient =
     options.serveClient ?? process.env.NODE_ENV === "production";
-  const port = options.port ?? Number(process.env.PORT ?? 8787);
+  const port = options.port ?? Number(process.env.PORT ?? 8788);
 
   const app = new Hono();
 
@@ -76,6 +76,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       filePath: file.filePath,
       source: file.source,
       size: file.size,
+      mtimeMs: file.mtimeMs,
     });
   });
 

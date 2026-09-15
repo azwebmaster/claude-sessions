@@ -26,8 +26,9 @@ import {
 } from "@mui/material";
 import type { SessionListItem } from "@shared/types";
 import { formatTokens, totalTokens } from "@shared/types";
-import { EmptyState, SectionPaper } from "../components/ui";
+import { EmptyState, SectionPaper, TaggedText } from "../components/ui";
 import { api, formatDate } from "../lib/api";
+import { isSessionActive } from "../lib/sessionActivity";
 import {
   AGE_PRESETS,
   boundsFromInputs,
@@ -56,6 +57,9 @@ interface SessionsResponse {
 function SessionChips({ session }: { session: SessionListItem }) {
   return (
     <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 0.75, flexWrap: "wrap" }}>
+      {isSessionActive(session.updatedAt) ? (
+        <Chip size="small" label="Live" color="success" variant="outlined" />
+      ) : null}
       <Chip
         size="small"
         label={session.source}
@@ -211,7 +215,7 @@ function SessionCard({
       }}
     >
       <Typography variant="subtitle2" sx={{ wordBreak: "break-word" }}>
-        {session.summary ?? "Untitled session"}
+        <TaggedText value={session.summary} fallback="Untitled session" />
       </Typography>
       <Typography
         variant="mono"
@@ -294,6 +298,12 @@ export function SessionListPage() {
   const [turnsMax, setTurnsMax] = useState("");
   const [maxAgeMs, setMaxAgeMs] = useState<number | null>(DEFAULT_MAX_AGE_MS);
   const [sort, setSort] = useState<SessionListSort>(DEFAULT_SESSION_SORT);
+  const [, forceTick] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => forceTick((n) => n + 1), 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -625,7 +635,9 @@ export function SessionListPage() {
                       onClick={() => navigate(`/sessions/${s.id}`)}
                     >
                       <TableCell sx={{ maxWidth: 420 }}>
-                        <Typography variant="subtitle2">{s.summary ?? "Untitled session"}</Typography>
+                        <Typography variant="subtitle2">
+                          <TaggedText value={s.summary} fallback="Untitled session" />
+                        </Typography>
                         <Typography
                           variant="mono"
                           color="text.secondary"

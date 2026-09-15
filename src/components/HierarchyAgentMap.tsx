@@ -16,12 +16,12 @@ interface Props {
   onSelectAgent?: (agentId: string) => void;
 }
 
-/** Shorten long agent ids for the skinny map column. */
+/** Trim the redundant prefix off an agent label for the skinny map column; the
+ * Typography below ellipsizes whatever is still too wide, and the full label
+ * stays in the row's `title`. */
 function shortLabel(row: AgentBreakdownRow): string {
   if (row.kind === "root_agent") return "Root";
-  const bare = row.label.replace(/^Subagent\s*·\s*/i, "").trim();
-  if (bare.length <= 14) return bare;
-  return `${bare.slice(0, 6)}…${bare.slice(-4)}`;
+  return row.label.replace(/^Subagent\s*·\s*/i, "").trim();
 }
 
 export function HierarchyAgentMap({

@@ -14,6 +14,22 @@ export interface LogLineRef {
   raw: string;
 }
 
+/** Stable dictionary key for a JSONL line, shared by every place that looks
+ * a stripped `LogLineRef.raw` back up via `SessionDetail.logLines`. */
+export function logLineKey(ref: Pick<LogLineRef, "filePath" | "line">): string {
+  return `${ref.filePath}:${ref.line}`;
+}
+
+/** Response shape for GET /api/sessions/:id/raw */
+export interface SessionRawInfo {
+  id: string;
+  projectPath: string;
+  filePath: string;
+  source: "local" | "fixture";
+  size: number;
+  mtimeMs: number;
+}
+
 export interface SessionListItem {
   id: string;
   projectPath: string;
@@ -145,8 +161,18 @@ export interface SessionDetail {
   timeline: ContextTimelinePoint[];
   toolImpact: ToolImpactRow[];
   agentBreakdown: AgentBreakdownRow[];
+  /** Every agent scope in this session: root first, then parent-before-child */
+  agents: SessionAgent[];
   /** Per-turn inventory of what makes up Claude's context window */
   loadedContext: TurnLoadedContext[];
+  /**
+   * Raw JSONL line text for stripped `LogLineRef`s, keyed by "filePath:line".
+   * loadedContext items carry evidence.raw === "" and subagent timeline
+   * points carry log.raw / promptLog.raw === "" — look up the real text here
+   * to avoid re-embedding the same line text in every turn's snapshot and in
+   * every agent's timeline.
+   */
+  logLines: Record<string, string>;
 }
 
 /** Severity for Agent SDK analysis findings */
@@ -244,22 +270,69 @@ export interface ContextTimelinePoint {
   turn: number;
   /** Matches the assistant TreeNode.id for hierarchy focus */
   nodeId: string;
-  timestamp: string | null;
   label: string;
+  /** Window occupancy at the end of the turn: the last model call's
+   *  input + cache-creation + cache-read tokens. */
   contextTokens: number;
+  /** The three fields below are the composition of `contextTokens` — read from
+   *  the turn's *last* model call, so they sum to it exactly. Summing them
+   *  across a multi-call turn would count the same cached prefix once per call. */
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** Reply tokens across every model call in the turn: billed, but never part
+   *  of `contextTokens`. */
   outputTokens: number;
   toolName: string | null;
   /** Source JSONL line for this assistant turn */
   log: LogLineRef;
+  /** Tool call(s) whose results this turn's context growth is attributed to */
+  causedBy: ContextGrowthCause[];
+  /** Non-empty if this turn launched a subagent (Task/Agent/TaskCreate) */
+  subagentLaunches: SubagentLaunchSummary[];
+  /** Every qualifying assistant entry's nodeId absorbed into this turn, in order */
+  memberNodeIds: string[];
+  /**
+   * Preview of the user prompt that opened this turn, with injected
+   * `<system-reminder>` blocks stripped. Null when that prompt carried no
+   * text blocks (or only system reminders).
+   */
+  promptPreview: string | null;
+  /** Source JSONL line of the user prompt that opened this turn */
+  promptLog: LogLineRef | null;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
+/** Lightweight reference to a tool call attributed to a turn's context
+ * growth — just the fields the UI shows, not the full `ToolImpactCall`
+ * (whose richer preview/timing data already lives in `ToolImpactRow.calls`). */
+export interface ContextGrowthCause {
+  toolUseId: string;
+  /** Share of the next context jump attributed to this call */
+  contextGrowthAttributed: number;
+  /** Short summary of the tool input (path, command, query, …) */
+  inputPreview: string | null;
 }
 
 /** One tool invocation contributing to context growth */
+/** `toolResultPreview` caps a `ToolImpactCall.resultPreview` at this many
+ *  characters; a preview at the cap ends in an ellipsis. */
+export const TOOL_RESULT_PREVIEW_CAP = 220;
+
 export interface ToolImpactCall {
   toolUseId: string;
   timestamp: string | null;
+  /**
+   * True once a `tool_result` for this call was recorded — the only signal for
+   * "the result arrived". `completedAt` cannot stand in for it: a result entry
+   * carrying no timestamp of its own leaves `completedAt` null.
+   */
+  resultApplied: boolean;
+  /** Timestamp the tool_result carried; null when it had none, or no result arrived */
+  completedAt: string | null;
+  /** Elapsed ms between `timestamp` and `completedAt`; null when either is missing */
+  durationMs: number | null;
   /** Short summary of the tool input (path, command, query, …) */
   inputPreview: string | null;
   /** Truncated tool result text */
@@ -301,6 +374,47 @@ export interface AgentBreakdownRow {
   turnCount: number;
   /** Per-tool call counts within this agent's transcript */
   tools: AgentToolSummary[];
+}
+
+/**
+ * One agent scope — the root transcript or a subagent — with its own turn
+ * timeline and tool impact. `agentId` joins to `AgentBreakdownRow.agentId`.
+ * Carries no `tree` (subagent subtrees are already nested in
+ * `SessionDetail.tree`) and no `loadedContext`.
+ */
+export interface SessionAgent {
+  agentId: string;
+  kind: "root_agent" | "subagent";
+  label: string;
+  /** `agentType` from the subagent's `.meta.json` sidecar, e.g. "Explore";
+   * null for the root agent and for subagents without a sidecar. */
+  agentType: string | null;
+  /** `description` from the sidecar, e.g. "Scan token call sites" */
+  description: string | null;
+  /** agentId of the launching subagent when the sidecar reports one
+   * (`spawnDepth >= 2`); null for the root agent and for subagents launched
+   * from the root transcript. */
+  parentAgentId: string | null;
+  /** The Task/Agent `tool_use` id that launched this agent; null for the root
+   * agent and when no sidecar named it. */
+  launchToolUseId: string | null;
+  /** 0 for the root agent; 1 for a subagent whose sidecar reports no depth. */
+  spawnDepth: number;
+  /** This agent's own turns. Subagent points carry `log.raw === ""` — the
+   * text lives in `SessionDetail.logLines`. */
+  timeline: ContextTimelinePoint[];
+  /** Tool impact scoped to this agent's transcript only */
+  toolImpact: ToolImpactRow[];
+}
+
+/** Subagent launch surfaced on the context timeline point that issued it */
+export interface SubagentLaunchSummary {
+  agentId: string;
+  label: string;
+  toolUseId: string;
+  peakContextTokens: number;
+  turnCount: number;
+  toolCallCount: number;
 }
 
 export function emptyUsage(): TokenUsage {
