@@ -329,11 +329,29 @@ export function TurnDetailPane({
   // absorbs the `turn == null` calls — which are in no `stepsByTurn` bucket and
   // would otherwise render nowhere — so the rail row and the collapsed strip
   // can count that same partition instead of re-deriving it.
+  //
+  // Kept unfiltered (unlike `visibleCalls` below) because this is also what
+  // `TurnStepChart`/`StepList` render from, and `StepList`'s
+  // `buildStepRunningContext` needs every call's `context.contextAfter` —
+  // including a tool-less call's — to keep its running total from going
+  // stale after a call this turn had no steps.
   const calls = useMemo(() => {
     const scope = index.scopes.get(selection.scopeId);
     if (!scope || turnNumber == null) return [];
     return callsForTurn(scope.modelCalls, turnNumber);
   }, [index, selection.scopeId, turnNumber]);
+
+  // A `ModelCall` with no steps (a tool-less assistant turn, or one whose
+  // steps all landed on another call sharing its `parallelGroupId`) renders
+  // no row — `StepList`'s `ModelCallGroup` returns null for
+  // `call.steps.length === 0`. This filtered view is only for the tab label
+  // and the empty-state check, so `Calls (${visibleCalls.length})` cannot
+  // disagree with the rows actually rendered below it, while `calls` itself
+  // stays unfiltered for the chart/list that compute running totals from it.
+  const visibleCalls = useMemo(
+    () => calls.filter((call) => call.steps.length > 0),
+    [calls],
+  );
 
   // Scrolls the row a chart click just selected into view: `?step=` can land
   // on a row the list didn't have on screen. Document-wide, not scoped to a
@@ -421,18 +439,19 @@ export function TurnDetailPane({
           variant="scrollable"
           scrollButtons="auto"
         >
-          {/* Counted off `calls`, the very list rendered below, so the label
-              cannot disagree with the rows. `stepsByTurn` would undercount: it
-              holds no entry for a call that emitted no tool block, and drops
-              turnless steps entirely. */}
-          <Tab value="steps" label={`Calls (${calls.length})`} />
+          {/* Counted off `visibleCalls`, filtered to the same calls `StepList`
+              actually renders a row for, so the label cannot disagree with
+              the rows. `stepsByTurn` would undercount for a different reason:
+              it holds no entry for a call that emitted no tool block, and
+              drops turnless steps entirely. */}
+          <Tab value="steps" label={`Calls (${visibleCalls.length})`} />
           <Tab value="context" label="Context" />
           <Tab value="loaded" label="Loaded" />
         </Tabs>
       </Box>
 
       {tab === "steps" ? (
-        calls.length === 0 ? (
+        visibleCalls.length === 0 ? (
           <EmptyState>No model calls recorded for this turn.</EmptyState>
         ) : (
           <>

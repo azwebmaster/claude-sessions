@@ -7,11 +7,18 @@
 
 export type TaggedSegment =
   | { kind: "text"; value: string }
-  | { kind: "tag"; tagName: string; value: string };
+  | { kind: "tag"; tagName: string; value: string; children: TaggedSegment[] };
 
-// Sibling tags only: real transcripts nest command-name/command-message/etc.
-// as siblings, never inside one another.
+// Most tags are siblings (command-name/command-message/etc.), but real
+// transcripts do nest some — e.g. <task-notification> wraps <task-id>,
+// <tool-use-id>, <output-file>. When a captured tag's value itself contains
+// tag markup, it is re-parsed into `children` instead of staying an opaque
+// string, so renderers can turn the nested tags into their own pills too.
 const TAG_PATTERN = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
+
+// Cheap, stateless containment check (no `g` flag, so no `lastIndex` to
+// manage) used to skip the recursive parse for the common leaf-tag case.
+const HAS_NESTED_TAG = /<([a-zA-Z][\w-]*)>[\s\S]*?<\/\1>/;
 
 export function parseTaggedContent(raw: string): TaggedSegment[] {
   const segments: TaggedSegment[] = [];
@@ -22,7 +29,8 @@ export function parseTaggedContent(raw: string): TaggedSegment[] {
     if (index > lastIndex) {
       segments.push({ kind: "text", value: raw.slice(lastIndex, index) });
     }
-    segments.push({ kind: "tag", tagName, value });
+    const children = HAS_NESTED_TAG.test(value) ? parseTaggedContent(value) : [];
+    segments.push({ kind: "tag", tagName, value, children });
     lastIndex = index + full.length;
   }
   if (lastIndex < raw.length) {

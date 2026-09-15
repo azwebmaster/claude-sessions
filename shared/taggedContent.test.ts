@@ -6,9 +6,9 @@ describe("parseTaggedContent", () => {
   it("parses sibling tags with a text gap between them", () => {
     const raw = "<command-name>/clear</command-name>\n<command-args></command-args>";
     assert.deepEqual(parseTaggedContent(raw), [
-      { kind: "tag", tagName: "command-name", value: "/clear" },
+      { kind: "tag", tagName: "command-name", value: "/clear", children: [] },
       { kind: "text", value: "\n" },
-      { kind: "tag", tagName: "command-args", value: "" },
+      { kind: "tag", tagName: "command-args", value: "", children: [] },
     ]);
   });
 
@@ -27,9 +27,50 @@ describe("parseTaggedContent", () => {
     const raw = "before <tag>content</tag> after";
     assert.deepEqual(parseTaggedContent(raw), [
       { kind: "text", value: "before " },
-      { kind: "tag", tagName: "tag", value: "content" },
+      { kind: "tag", tagName: "tag", value: "content", children: [] },
       { kind: "text", value: " after" },
     ]);
+  });
+
+  it("recursively parses a tag whose value contains further tags", () => {
+    const raw =
+      "<task-notification><task-id>abc</task-id><tool-use-id>def</tool-use-id></task-notification>";
+    const result = parseTaggedContent(raw);
+    assert.equal(result.length, 1);
+    const [outer] = result;
+    assert.equal(outer.kind, "tag");
+    assert.ok(outer.kind === "tag");
+    assert.equal(outer.tagName, "task-notification");
+    assert.equal(
+      outer.value,
+      "<task-id>abc</task-id><tool-use-id>def</tool-use-id>",
+    );
+    assert.deepEqual(outer.children, [
+      { kind: "tag", tagName: "task-id", value: "abc", children: [] },
+      { kind: "tag", tagName: "tool-use-id", value: "def", children: [] },
+    ]);
+  });
+
+  it("recurses through multiple levels of nesting", () => {
+    const raw = "<a><b><c>leaf</c></b></a>";
+    const result = parseTaggedContent(raw);
+    assert.equal(result.length, 1);
+    const [a] = result;
+    assert.ok(a.kind === "tag");
+    assert.equal(a.children.length, 1);
+    const [b] = a.children;
+    assert.ok(b.kind === "tag");
+    assert.equal(b.tagName, "b");
+    assert.deepEqual(b.children, [
+      { kind: "tag", tagName: "c", value: "leaf", children: [] },
+    ]);
+  });
+
+  it("leaves a leaf tag's children empty when its value has no nested tags", () => {
+    const raw = "<task-id>abc</task-id>";
+    const [segment] = parseTaggedContent(raw);
+    assert.ok(segment.kind === "tag");
+    assert.deepEqual(segment.children, []);
   });
 });
 
