@@ -910,6 +910,38 @@ describe("callsForTurn / stepCountsByTurn", () => {
       );
     }
   });
+
+  // `TurnDetailPane` filters `callsForTurn`'s result to `steps.length > 0`
+  // before using it for both the `Calls (${count})` tab label and the
+  // empty-state check, because `StepList`'s `ModelCallGroup` renders nothing
+  // for a call with no steps. These two cases pin the data this filter acts
+  // on, so a regression in that filter (or in this list's shape) shows up
+  // here rather than only as a silent UI mismatch.
+  it("includes a4's empty-steps row in turn 2, which the pane must filter out so its Calls(N) label agrees with what StepList renders", () => {
+    const turnTwo = callsForTurn(rootCalls(), 2);
+    assert.deepEqual(
+      turnTwo.map((c) => c.assistantNodeId),
+      ["a3", "a4"],
+    );
+    const toolLess = turnTwo.find((c) => c.assistantNodeId === "a4")!;
+    assert.deepEqual(toolLess.steps, []);
+    assert.deepEqual(
+      turnTwo.filter((c) => c.steps.length > 0).map((c) => c.assistantNodeId),
+      ["a3"],
+    );
+  });
+
+  it("filters an all-tool-less turn down to Calls(0) rather than a nonzero count with nothing to render", () => {
+    const tree = buildTree();
+    const calls = buildModelCalls(tree, [], buildTurnNodeIndex(tree, rootPoints));
+    const turnOne = callsForTurn(calls, 1);
+    // Turn 1 absorbs the turnless `a0` alongside `a1` and `a2`; all three
+    // carry no steps (built from zero scope steps), so the unfiltered list
+    // would label the tab "Calls (3)" while StepList renders no row for any
+    // of them.
+    assert.equal(turnOne.length, 3);
+    assert.deepEqual(turnOne.filter((c) => c.steps.length > 0), []);
+  });
 });
 
 describe("resolveSubagentInlineView", () => {
