@@ -1,0 +1,26 @@
+{
+  "name": "claude-sessions",
+  "install": "pnpm install --frozen-lockfile",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "pnpm dev",
+      "description": "Hono API server (tsx watch) on http://127.0.0.1:8787"
+    },
+    {
+      "name": "client",
+      "command": "pnpm dev:client",
+      "description": "Vite React dev server on http://localhost:5173 (proxies /api to the API on 8787)"
+    }
+  ],
+  "ports": [
+    {
+      "name": "client",
+      "port": 5173
+    },
+    {
+      "name": "api",
+      "port": 8787
+    }
+  ]
+}
