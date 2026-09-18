@@ -69,6 +69,12 @@ interface RawEntry {
   message?: {
     role?: string;
     model?: string;
+    /**
+     * Claude Code writes one JSONL line per content block, so every line of
+     * one API response repeats this id — it is the real grouping key for
+     * collapsing those lines back into one response (`computeResponseGroups`).
+     */
+    id?: string;
     content?: string | ContentBlock[];
     usage?: RawUsage;
   };
@@ -242,22 +248,137 @@ function isSubagentLaunchTool(name: string | null | undefined): boolean {
   return name != null && SUBAGENT_LAUNCH_TOOL_NAMES.has(name);
 }
 
+/** One API response, reassembled from every JSONL line that shares its
+ * `message.id` (Claude Code writes one line per content block). */
+interface ResponseGroup {
+  members: SourcedEntry[];
+  /** The FIRST member's uuid (or the counter-fallback), so a single-line
+   *  response keeps the id `computeAssistantNodeIds` minted before response
+   *  grouping existed. */
+  nodeId: string;
+  /** Merged usage for the whole response: input/cache taken once (from the
+   *  first member — 0 real groups were observed to differ), `outputTokens`
+   *  the max across members (a partial streaming value; the final value
+   *  lands on the last member) — never summed, or totals inflate 2-4x. */
+  usage: TokenUsage;
+}
+
+/** Memoized per `sourcedEntries` array, matching `turnGroupsCache`'s
+ * convention: several consumers (tree, timeline, tool-impact, session
+ * totals) walk the same entries array per session/subagent transcript. */
+const responseGroupsCache = new WeakMap<
+  SourcedEntry[],
+  { groups: ResponseGroup[]; byEntry: Map<SourcedEntry, ResponseGroup> }
+>();
+
+/**
+ * Groups assistant JSONL lines that belong to one API response, keyed by
+ * `message.id` — not adjacency: `tool_result` lines interleave between a
+ * response's own lines, and a later member's `parentUuid` may chain off an
+ * earlier member's tool_result rather than off the previous member itself.
+ *
+ * Walks in file order with a map of currently-open groups keyed by
+ * `message.id`. A real user prompt (`isRealUserPrompt`) closes every open
+ * group first: a response cannot span a user prompt, so a reused id in a
+ * later turn can never merge across the boundary (protects
+ * `buildTurnNodeIndex`'s invariant that a call's steps share one turn).
+ */
+function computeResponseGroups(sourcedEntries: SourcedEntry[]): {
+  groups: ResponseGroup[];
+  byEntry: Map<SourcedEntry, ResponseGroup>;
+} {
+  const cached = responseGroupsCache.get(sourcedEntries);
+  if (cached) return cached;
+
+  const groups: ResponseGroup[] = [];
+  const byEntry = new Map<SourcedEntry, ResponseGroup>();
+  const open = new Map<string, ResponseGroup>();
+  let assistantIndex = 0;
+
+  for (const sourced of sourcedEntries) {
+    const entry = sourced.entry;
+    if (isRealUserPrompt(entry)) {
+      open.clear();
+      continue;
+    }
+    if (entry.type !== "assistant") continue;
+
+    // Any non-empty string is an opaque grouping key — do not validate a
+    // `msg_` prefix (a handful of real transcripts carry UUID-shaped ids).
+    const rawId = entry.message?.id;
+    const key = typeof rawId === "string" && rawId.length > 0 ? rawId : null;
+    let group = key != null ? open.get(key) : undefined;
+    if (!group) {
+      // A null key, or no open group for this key, starts a new group.
+      // Preserve the pre-grouping counter-fallback semantics exactly: the
+      // fallback path (no `message.id` anywhere) makes every line its own
+      // group, so this must produce identical ids to the old per-line loop.
+      group = {
+        members: [],
+        nodeId: entry.uuid ?? `assistant-${assistantIndex}`,
+        usage: emptyUsage(),
+      };
+      groups.push(group);
+      if (key != null) open.set(key, group);
+    }
+    assistantIndex += 1;
+
+    group.members.push(sourced);
+    byEntry.set(sourced, group);
+
+    const u = toUsage(entry.message?.usage);
+    if (group.members.length === 1) {
+      group.usage = u;
+    } else {
+      // Output is billed per line and accumulates (streamed ramp), so it's
+      // always the max across every member. Input/cache tokens describe the
+      // API call's context, not this line — normally identical on every
+      // member, so the first member's value is used. But if that first
+      // member's own usage is zero/absent (e.g. a leading `thinking`-only
+      // line before usage is attached) while a later member carries the
+      // real nonzero values, fall forward to the first member that actually
+      // has nonzero input/cache usage instead of permanently reporting zero.
+      const hasInputOrCache = (usage: TokenUsage) =>
+        usage.inputTokens > 0 ||
+        usage.cacheCreationInputTokens > 0 ||
+        usage.cacheReadInputTokens > 0;
+      const preferThisMember = !hasInputOrCache(group.usage) && hasInputOrCache(u);
+      group.usage = {
+        inputTokens: preferThisMember ? u.inputTokens : group.usage.inputTokens,
+        cacheCreationInputTokens: preferThisMember
+          ? u.cacheCreationInputTokens
+          : group.usage.cacheCreationInputTokens,
+        cacheReadInputTokens: preferThisMember
+          ? u.cacheReadInputTokens
+          : group.usage.cacheReadInputTokens,
+        outputTokens: Math.max(group.usage.outputTokens, u.outputTokens),
+      };
+    }
+  }
+
+  const result = { groups, byEntry };
+  responseGroupsCache.set(sourcedEntries, result);
+  return result;
+}
+
 /**
  * Stable per-turn identifier used to correlate the context timeline with
  * tool-impact attribution (`causedBy`) and subagent launches. Computed once
  * so both joins key off the same entry->nodeId mapping instead of each
  * re-deriving `entry.uuid ?? assistant-${assistantIndex}` independently,
  * which could silently desync if only one of them changed its iteration.
+ *
+ * A thin projection of `computeResponseGroups`: every member of a response
+ * group shares that group's `nodeId`, so the N JSONL lines Claude Code wrote
+ * for one API response collapse onto a single id here.
  */
 function computeAssistantNodeIds(
   sourcedEntries: SourcedEntry[],
 ): Map<SourcedEntry, string> {
+  const { byEntry } = computeResponseGroups(sourcedEntries);
   const nodeIds = new Map<SourcedEntry, string>();
-  let assistantIndex = 0;
-  for (const sourced of sourcedEntries) {
-    if (sourced.entry.type !== "assistant") continue;
-    nodeIds.set(sourced, sourced.entry.uuid ?? `assistant-${assistantIndex}`);
-    assistantIndex += 1;
+  for (const [sourced, group] of byEntry) {
+    nodeIds.set(sourced, group.nodeId);
   }
   return nodeIds;
 }
@@ -639,8 +760,10 @@ export async function parseSessionFile(
   let peakContextTokens = 0;
 
   const agentIds = new Set<string>();
+  const { byEntry: responseGroupByEntry } = computeResponseGroups(entries);
 
-  const consider = (entry: RawEntry) => {
+  const consider = (sourced: SourcedEntry) => {
+    const entry = sourced.entry;
     if (entry.timestamp) {
       if (!startedAt || entry.timestamp < startedAt) startedAt = entry.timestamp;
       if (!updatedAt || entry.timestamp > updatedAt) updatedAt = entry.timestamp;
@@ -670,16 +793,25 @@ export async function parseSessionFile(
 
     if (entry.type === "assistant") {
       if (entry.message?.model) model = entry.message.model;
-      const u = toUsage(entry.message?.usage);
-      usage = addUsage(usage, u);
-      peakContextTokens = Math.max(peakContextTokens, contextSize(u));
+      // One response is N JSONL lines repeating the same usage payload;
+      // fold it in once, at the group's first member, using the merged
+      // (input/cache-once, output-max) usage — summing every line inflates
+      // totals 2-4x.
+      const group = responseGroupByEntry.get(sourced)!;
+      if (sourced === group.members[0]) {
+        const u = group.usage;
+        usage = addUsage(usage, u);
+        peakContextTokens = Math.max(peakContextTokens, contextSize(u));
+      }
+      // Blocks are per line, so the total is unchanged by grouping — count
+      // every member's tool_use blocks.
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use") toolCallCount += 1;
       }
     }
   };
 
-  for (const sourced of entries) consider(sourced.entry);
+  for (const sourced of entries) consider(sourced);
   const turnCount = countRealTurns(entries);
 
   // Fall back to a title derived from the first user message when the
@@ -779,7 +911,6 @@ function ensureToolRow(
 
 function buildToolImpact(
   sourcedEntries: SourcedEntry[],
-  nodeIds: Map<SourcedEntry, string>,
 ): { rows: ToolImpactRow[]; byTurn: Map<string, ContextGrowthCause[]> } {
   const byTool = new Map<
     string,
@@ -799,12 +930,14 @@ function buildToolImpact(
   const byTurn = new Map<string, ContextGrowthCause[]>();
   let lastContext: number | null = null;
   let pending: { toolName: string; call: ToolImpactCall }[] = [];
+  const { byEntry: responseGroupByEntry } = computeResponseGroups(sourcedEntries);
 
   for (const sourced of sourcedEntries) {
     const { entry } = sourced;
     if (entry.type === "assistant") {
-      const nodeId = nodeIds.get(sourced)!;
+      const group = responseGroupByEntry.get(sourced)!;
 
+      // Blocks live on their own line, so register every member's tool_use.
       for (const block of asBlocks(entry.message?.content)) {
         if (block.type === "tool_use" && block.id && block.name) {
           const row = ensureToolRow(byTool, block.name);
@@ -826,30 +959,38 @@ function buildToolImpact(
         }
       }
 
-      const u = toUsage(entry.message?.usage);
-      if (totalTokens(u) > 0) {
-        const ctx = contextSize(u);
-        const growth = lastContext == null ? 0 : Math.max(0, ctx - lastContext);
-        if (growth > 0 && pending.length > 0) {
-          const weightSum =
-            pending.reduce((s, p) => s + p.call.resultTokens, 0) || 1;
-          const causes: ContextGrowthCause[] = [];
-          for (const item of pending) {
-            const share = (item.call.resultTokens / weightSum) * growth;
-            item.call.contextGrowthAttributed += share;
-            const row = byTool.get(item.toolName);
-            if (row) row.contextGrowthAttributed += share;
-            causes.push({
-              toolUseId: item.call.toolUseId,
-              contextGrowthAttributed: Math.round(share),
-              inputPreview: item.call.inputPreview,
-            });
+      // The growth/pro-rata attribution flush runs once per response, at
+      // its first member, using the group's merged usage. Members 2..N of a
+      // group repeat the same usage line — flushing on every member would
+      // report zero growth for them and discard every tool result queued
+      // up in `pending` since the previous flush, leaving only a batch's
+      // last call ever attributed.
+      if (sourced === group.members[0]) {
+        const u = group.usage;
+        if (totalTokens(u) > 0) {
+          const ctx = contextSize(u);
+          const growth = lastContext == null ? 0 : Math.max(0, ctx - lastContext);
+          if (growth > 0 && pending.length > 0) {
+            const weightSum =
+              pending.reduce((s, p) => s + p.call.resultTokens, 0) || 1;
+            const causes: ContextGrowthCause[] = [];
+            for (const item of pending) {
+              const share = (item.call.resultTokens / weightSum) * growth;
+              item.call.contextGrowthAttributed += share;
+              const row = byTool.get(item.toolName);
+              if (row) row.contextGrowthAttributed += share;
+              causes.push({
+                toolUseId: item.call.toolUseId,
+                contextGrowthAttributed: Math.round(share),
+                inputPreview: item.call.inputPreview,
+              });
+            }
+            causes.sort((a, b) => b.contextGrowthAttributed - a.contextGrowthAttributed);
+            byTurn.set(group.nodeId, causes);
           }
-          causes.sort((a, b) => b.contextGrowthAttributed - a.contextGrowthAttributed);
-          byTurn.set(nodeId, causes);
+          lastContext = ctx;
+          pending = [];
         }
-        lastContext = ctx;
-        pending = [];
       }
     }
 
@@ -1685,7 +1826,19 @@ function buildLoadedContext(
 
     if (entry.type === "assistant") {
       const nodeId = nodeIds.get(sourced)!;
-      const u = toUsage(entry.message?.usage);
+      // Use the response group's merged usage, not this line's own raw
+      // usage: a response split across N JSONL lines can carry usage on
+      // more than one line, and per-line usage would otherwise miss a
+      // member whose own usage is zero/absent while the group's usage
+      // (folded by `computeResponseGroups`) is not. Restricting the
+      // snapshot recompute below to the group's true final member (instead
+      // of every member that happens to pass the usage check) keeps the
+      // O(inventory) `snapshotInventory` call to once per response instead
+      // of once per qualifying member.
+      const { byEntry: loadedContextGroupByEntry } = computeResponseGroups(sourcedEntries);
+      const group = loadedContextGroupByEntry.get(sourced)!;
+      const u = group.usage;
+      const isGroupFinalMember = group.members[group.members.length - 1] === sourced;
       const blocks = asBlocks(entry.message?.content);
       const text = blocks
         .filter((b) => b.type === "text")
@@ -1767,7 +1920,12 @@ function buildLoadedContext(
         if (text) {
           assistantMessageCount += 1;
           upsertItem(inventory, {
-            id: `assistant-text:${nodeId}`,
+            // Keyed on this line's own uuid, not the shared group nodeId:
+            // two text-bearing members of one response would otherwise
+            // collide here, and `upsertItem`'s max-token merge would
+            // silently overwrite one member's preview and inflate
+            // `estimatedTokens`.
+            id: `assistant-text:${entry.uuid ?? nodeId}`,
             kind: "assistant_message",
             label: `Assistant reply ${assistantMessageCount}`,
             detail: previewText(text, 160),
@@ -1778,9 +1936,14 @@ function buildLoadedContext(
           });
         }
 
-        const point = timeline.find((p) => p.nodeId === nodeId);
-        if (point) {
-          snapshots.set(nodeId, snapshotInventory(inventory, point, logLines));
+        // Recompute the snapshot only once per response, at its true final
+        // member, so it reflects every member's contributions instead of
+        // being redone (and overwritten) once per qualifying member.
+        if (isGroupFinalMember) {
+          const point = timeline.find((p) => p.nodeId === nodeId);
+          if (point) {
+            snapshots.set(nodeId, snapshotInventory(inventory, point, logLines));
+          }
         }
       }
     }
@@ -1800,6 +1963,7 @@ function buildTimeline(
 ): { points: ContextTimelinePoint[]; subagentToolUseIds: Map<string, string[]> } {
   const points: ContextTimelinePoint[] = [];
   const subagentToolUseIds = new Map<string, string[]>();
+  const { byEntry: responseGroupByEntry } = computeResponseGroups(sourcedEntries);
   let turn = 0;
   for (const group of groupIntoTurns(sourcedEntries)) {
     const qualifying = group.qualifyingAssistantEntries;
@@ -1807,8 +1971,16 @@ function buildTimeline(
     turn += 1;
 
     const last = qualifying[qualifying.length - 1];
-    const lastEntry = last.entry;
     const nodeId = nodeIds.get(last)!;
+    const lastGroup = responseGroupByEntry.get(last)!;
+    // The group's true last member in file order — not necessarily `last`:
+    // `last` is picked from the usage-filtered `qualifying` list, so if the
+    // group's actual final line fails that filter (zero/missing own usage)
+    // while an earlier member passes, `last` resolves to that earlier
+    // member. `nodeId` is unaffected (every member of a group shares it),
+    // but anything that should point at the specific JSONL line the group
+    // ended on — the transcript-line link — must use this instead of `last`.
+    const trueLastMember = lastGroup.members[lastGroup.members.length - 1];
 
     // Output is billed per model call, so it accumulates over the turn. The
     // context parts are not: every call in a turn re-sends the same prefix, so
@@ -1816,12 +1988,19 @@ function buildTimeline(
     // with `contextTokens`. They come from `lastUsage` below instead.
     let outputTokens = 0;
     const memberNodeIds: string[] = [];
+    // A turn can absorb several response groups; each group's members all
+    // map to the same node id, so this must dedupe or every downstream
+    // `causedBy` join (`memberNodeIds.flatMap(...)`) duplicates its results.
+    const seenGroupNodeIds = new Set<string>();
     const launchIds: string[] = [];
 
     for (const sourced of qualifying) {
-      const u = toUsage(sourced.entry.message?.usage);
-      outputTokens += u.outputTokens;
-      memberNodeIds.push(nodeIds.get(sourced)!);
+      const memberNodeId = nodeIds.get(sourced)!;
+      if (!seenGroupNodeIds.has(memberNodeId)) {
+        seenGroupNodeIds.add(memberNodeId);
+        memberNodeIds.push(memberNodeId);
+        outputTokens += responseGroupByEntry.get(sourced)!.usage.outputTokens;
+      }
       for (const block of asBlocks(sourced.entry.message?.content)) {
         if (block.type === "tool_use" && isSubagentLaunchTool(block.name) && block.id) {
           launchIds.push(block.id);
@@ -1830,12 +2009,23 @@ function buildTimeline(
     }
     if (launchIds.length > 0) subagentToolUseIds.set(nodeId, launchIds);
 
-    const lastUsage = toUsage(lastEntry.message?.usage);
-    const tools = asBlocks(lastEntry.message?.content)
+    // The merged group usage, not `last`'s own raw usage: same reasoning as
+    // `computeResponseGroups`'s fold — a single member's own usage can be
+    // zero/absent while the group's merged usage (input/cache falling
+    // forward to the first member that has it, output as the max) is not.
+    const lastUsage = lastGroup.usage;
+    // Derived from every line of the turn's last response, not just its
+    // last line: a real response's first line often carries only
+    // `thinking`, so the actual tool calls / reply text live on later
+    // members of the same group.
+    const lastGroupBlocks = lastGroup.members.flatMap((m) =>
+      asBlocks(m.entry.message?.content),
+    );
+    const tools = lastGroupBlocks
       .filter((b) => b.type === "tool_use")
       .map((b) => b.name)
       .filter(Boolean);
-    const text = asBlocks(lastEntry.message?.content)
+    const text = lastGroupBlocks
       .filter((b) => b.type === "text")
       .map((b) => b.text ?? "")
       .join(" ");
@@ -1856,7 +2046,7 @@ function buildTimeline(
       cacheCreationTokens: lastUsage.cacheCreationInputTokens,
       outputTokens,
       toolName: tools[0] ?? null,
-      log: toLogRef(last),
+      log: toLogRef(trueLastMember),
       causedBy: [],
       subagentLaunches: [],
       memberNodeIds,
@@ -1899,7 +2089,6 @@ function fillSubagentLaunches(
 
 function buildAgentTreeFromEntries(
   sourcedEntries: SourcedEntry[],
-  nodeIds: Map<SourcedEntry, string>,
   opts: {
     id: string;
     label: string;
@@ -1936,6 +2125,7 @@ function buildAgentTreeFromEntries(
   let toolCalls = 0;
   let messages = 0;
   let lastContext: number | null = null;
+  const { byEntry: responseGroupByEntry } = computeResponseGroups(sourcedEntries);
 
   for (const sourced of sourcedEntries) {
     const entry = sourced.entry;
@@ -2000,32 +2190,67 @@ function buildAgentTreeFromEntries(
     }
 
     if (entry.type === "assistant") {
-      const u = toUsage(entry.message?.usage);
+      const group = responseGroupByEntry.get(sourced)!;
+      // The group is materialized once, at its first member — the other
+      // members were already folded in below when we hit that first line.
+      if (sourced !== group.members[0]) continue;
+
+      const u = group.usage;
       usage = addUsage(usage, u);
       const ctx = contextSize(u);
       peak = Math.max(peak, ctx);
       const delta =
         lastContext == null || totalTokens(u) === 0 ? null : ctx - lastContext;
       if (totalTokens(u) > 0) lastContext = ctx;
-      if (entry.message?.model) root.model = entry.message.model;
 
-      const blocks = asBlocks(entry.message?.content);
-      const thinking = blocks
-        .filter((b) => b.type === "thinking")
-        .map((b) => b.thinking ?? b.text ?? "")
-        .join("\n");
-      const text = blocks
-        .filter((b) => b.type === "text")
-        .map((b) => b.text ?? "")
-        .join("\n");
-      const tools = blocks.filter((b) => b.type === "tool_use");
+      // model: the first member of the group that actually carries one.
+      let groupModel: string | null = null;
+      for (const member of group.members) {
+        if (member.entry.message?.model) {
+          groupModel = member.entry.message.model;
+          break;
+        }
+      }
+      if (groupModel) root.model = groupModel;
+
+      // Merge every member's blocks in member order: a real response's
+      // first line often carries only `thinking`, so the reply text lives
+      // on a later line of the same group.
+      let thinking = "";
+      let text = "";
+      const thinkingLog: { log: LogLineRef; timestamp: string | null } = {
+        log,
+        timestamp: entry.timestamp ?? null,
+      };
+      let sawThinking = false;
+      const tools: { member: SourcedEntry; block: ContentBlock }[] = [];
+      for (const member of group.members) {
+        const memberLog = toLogRef(member);
+        for (const block of asBlocks(member.entry.message?.content)) {
+          if (block.type === "thinking") {
+            const piece = block.thinking ?? block.text ?? "";
+            thinking = thinking ? `${thinking}\n${piece}` : piece;
+            if (!sawThinking) {
+              sawThinking = true;
+              thinkingLog.log = memberLog;
+              thinkingLog.timestamp = member.entry.timestamp ?? null;
+            }
+          } else if (block.type === "text") {
+            text = text ? `${text}\n${(block.text ?? "")}` : block.text ?? "";
+          } else if (block.type === "tool_use") {
+            tools.push({ member, block });
+          }
+        }
+      }
 
       const assistantNode: TreeNode = {
-        id: nodeIds.get(sourced)!,
+        id: group.nodeId,
         kind: "assistant_message",
-        label: tools.length ? `Assistant · ${tools.map((t) => t.name).join(", ")}` : "Assistant",
+        label: tools.length
+          ? `Assistant · ${tools.map(({ block }) => block.name).join(", ")}`
+          : "Assistant",
         timestamp: entry.timestamp ?? null,
-        model: entry.message?.model ?? null,
+        model: groupModel,
         usage: totalTokens(u) > 0 ? u : null,
         context:
           totalTokens(u) > 0
@@ -2045,17 +2270,17 @@ function buildAgentTreeFromEntries(
           id: `${assistantNode.id}-thinking`,
           kind: "thinking",
           label: "Thinking",
-          timestamp: entry.timestamp ?? null,
+          timestamp: thinkingLog.timestamp,
           model: null,
           usage: null,
           context: null,
           preview: previewText(thinking, 200),
-          log,
+          log: thinkingLog.log,
           children: [],
         });
       }
 
-      for (const tool of tools) {
+      for (const { member, block: tool } of tools) {
         toolCalls += 1;
         const name = tool.name ?? "tool";
         toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
@@ -2069,7 +2294,10 @@ function buildAgentTreeFromEntries(
           label: summary
             ? `${tool.name ?? "tool"} · ${summary}`
             : (tool.name ?? "tool"),
-          timestamp: entry.timestamp ?? null,
+          // Per-call, not per-group: calls in one batch can differ by
+          // seconds, and "View transcript line" needs the line the call
+          // actually appears on.
+          timestamp: member.entry.timestamp ?? null,
           model: null,
           usage: null,
           context: {
@@ -2078,8 +2306,7 @@ function buildAgentTreeFromEntries(
             contextDelta: null,
           },
           preview: inputPreview,
-          // Tool calls live inside the assistant JSONL row.
-          log,
+          log: toLogRef(member),
           toolName: tool.name,
           toolUseId: tool.id,
           agentId: isSubagent
@@ -2236,7 +2463,7 @@ export function buildSessionDetail(
   };
 
   const nodeIds = computeAssistantNodeIds(parsed.entries);
-  const rootBuild = buildAgentTreeFromEntries(parsed.entries, nodeIds, {
+  const rootBuild = buildAgentTreeFromEntries(parsed.entries, {
     id: file.id,
     label: "Root agent",
     kind: "root_agent",
@@ -2307,7 +2534,7 @@ export function buildSessionDetail(
         ?.entry.message?.model ?? null;
     const label = subagentLabel(sub.agentId, sub.meta);
     const subNodeIds = computeAssistantNodeIds(sub.entries);
-    const built = buildAgentTreeFromEntries(sub.entries, subNodeIds, {
+    const built = buildAgentTreeFromEntries(sub.entries, {
       id: sub.agentId,
       label,
       kind: "subagent",
@@ -2320,10 +2547,7 @@ export function buildSessionDetail(
     // costs no extra grouping pass.
     const { points: subTimeline, subagentToolUseIds: subLaunchIds } =
       buildTimeline(sub.entries, subNodeIds);
-    const { rows: subToolImpact, byTurn: subByTurn } = buildToolImpact(
-      sub.entries,
-      subNodeIds,
-    );
+    const { rows: subToolImpact, byTurn: subByTurn } = buildToolImpact(sub.entries);
     for (const point of subTimeline) {
       point.causedBy = point.memberNodeIds.flatMap(
         (id) => subByTurn.get(id) ?? [],
@@ -2433,7 +2657,7 @@ export function buildSessionDetail(
     parsed.entries,
     nodeIds,
   );
-  const { rows: toolImpact, byTurn } = buildToolImpact(parsed.entries, nodeIds);
+  const { rows: toolImpact, byTurn } = buildToolImpact(parsed.entries);
 
   for (const point of timeline) {
     point.causedBy = point.memberNodeIds.flatMap((id) => byTurn.get(id) ?? []);
