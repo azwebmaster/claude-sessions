@@ -1746,3 +1746,386 @@ describe("turn promptPreview", () => {
     assert.equal(detail.timeline[1].promptLog?.line, 3);
   });
 });
+
+describe("assistant entries sharing one message.id", () => {
+  // A response's usage line is identical on every JSONL line except
+  // `output_tokens`, which is a partial streaming value that ramps up to its
+  // final value on the last member.
+  const MSG1_USAGE_BASE = {
+    input_tokens: 1000,
+    cache_creation_input_tokens: 10,
+    cache_read_input_tokens: 0,
+  };
+  const MSG2_USAGE = {
+    input_tokens: 1500,
+    output_tokens: 20,
+    cache_creation_input_tokens: 10,
+    cache_read_input_tokens: 0,
+  };
+
+  /**
+   * A real response split across JSONL lines: `msg_1` carries `thinking`,
+   * `text`, and two `tool_use` blocks across 4 lines with `tool_result`
+   * lines interleaved, then `msg_2` replies once both results are in.
+   * `withMessageId=false` reproduces the fixture with every `message.id`
+   * stripped, to lock in the pre-grouping fallback behavior.
+   */
+  function buildEntries(sessionId: string, withMessageId: boolean): unknown[] {
+    const msgId = (id: string) => (withMessageId ? { id } : {});
+    return [
+      {
+        type: "user",
+        uuid: "u0",
+        parentUuid: null,
+        timestamp: "2026-05-01T00:00:00.000Z",
+        sessionId,
+        message: { role: "user", content: "Read two files." },
+      },
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u0",
+        timestamp: "2026-05-01T00:00:01.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          ...msgId("msg_1"),
+          content: [{ type: "thinking", thinking: "Let me read both files." }],
+          usage: { ...MSG1_USAGE_BASE, output_tokens: 1 },
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a2",
+        parentUuid: "a1",
+        timestamp: "2026-05-01T00:00:02.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          ...msgId("msg_1"),
+          content: [{ type: "text", text: "Reading both files now." }],
+          usage: { ...MSG1_USAGE_BASE, output_tokens: 5 },
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a3",
+        parentUuid: "a2",
+        timestamp: "2026-05-01T00:00:03.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          ...msgId("msg_1"),
+          content: [
+            { type: "tool_use", id: "toolu_r1", name: "Read", input: { file_path: "a.ts" } },
+          ],
+          usage: { ...MSG1_USAGE_BASE, output_tokens: 50 },
+        },
+      },
+      {
+        type: "user",
+        uuid: "u1",
+        parentUuid: "a3",
+        timestamp: "2026-05-01T00:00:04.000Z",
+        sessionId,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_r1", content: "ok" }],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a4",
+        parentUuid: "u1",
+        timestamp: "2026-05-01T00:00:05.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          ...msgId("msg_1"),
+          content: [
+            { type: "tool_use", id: "toolu_r2", name: "Grep", input: { pattern: "TODO" } },
+          ],
+          usage: { ...MSG1_USAGE_BASE, output_tokens: 120 },
+        },
+      },
+      {
+        type: "user",
+        uuid: "u2",
+        parentUuid: "a4",
+        timestamp: "2026-05-01T00:00:06.000Z",
+        sessionId,
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_r2", content: "x".repeat(40) },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        uuid: "a5",
+        parentUuid: "u2",
+        timestamp: "2026-05-01T00:00:07.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          ...msgId("msg_2"),
+          content: [{ type: "text", text: "Both files read; nothing else to do." }],
+          usage: MSG2_USAGE,
+        },
+      },
+    ];
+  }
+
+  it("collapses one API response's JSONL lines into a single assistant node with per-block log fidelity", async () => {
+    const sessionId = "resp-group-basic";
+    const { detail } = await parseSyntheticSession(sessionId, buildEntries(sessionId, true));
+
+    // 1. One node per response: assistant nodes are ["a1", "a5"], not 5.
+    const assistantIds = detail.tree.children
+      .filter((c) => c.kind === "assistant_message")
+      .map((c) => c.id);
+    assert.deepEqual(assistantIds, ["a1", "a5"]);
+
+    const a1 = detail.tree.children.find((c) => c.id === "a1") as TreeNode;
+    assert.deepEqual(
+      a1.children.map((c) => c.kind),
+      ["thinking", "tool_call", "tool_call"],
+    );
+    const [, toolR1, toolR2] = a1.children;
+    assert.equal(toolR1.toolUseId, "toolu_r1");
+    assert.equal(toolR2.toolUseId, "toolu_r2");
+    assert.equal(toolR1.children[0]?.kind, "tool_result");
+    assert.equal(toolR2.children[0]?.kind, "tool_result");
+
+    // 2. Per-block log fidelity: each member keeps its own transcript line.
+    assert.equal(a1.log?.line, 2);
+    assert.equal(toolR1.log?.line, 4);
+    assert.equal(toolR2.log?.line, 6);
+
+    // 3. Merged usage is not a sum: outputTokens is the max (120), not the
+    // sum of the ramp (1+5+50+120=176); input/cache are taken once.
+    assert.equal(a1.usage?.outputTokens, 120);
+    assert.notEqual(a1.usage?.outputTokens, 176);
+    assert.equal(a1.usage?.inputTokens, 1000);
+    assert.equal(a1.context?.contextAfter, 1010);
+    assert.equal(a1.context?.contextDelta, null);
+
+    // 4. Delta measured against the previous response, not a sibling line.
+    const a5 = detail.tree.children.find((c) => c.id === "a5") as TreeNode;
+    assert.equal(a5.context?.contextDelta, 500);
+  });
+
+  it("does not inflate session token totals when a response spans multiple lines", async () => {
+    const sessionId = "resp-group-session-totals";
+    const { parsed } = await parseSyntheticSession(sessionId, buildEntries(sessionId, true));
+
+    // 5. Session totals: input/cache once per response, output = max, never summed.
+    assert.deepEqual(parsed.usage, {
+      inputTokens: 2500,
+      outputTokens: 140,
+      cacheCreationInputTokens: 20,
+      cacheReadInputTokens: 0,
+    });
+    assert.equal(parsed.peakContextTokens, 1510);
+
+    // 8. toolCallCount counts blocks once, not per member of the response
+    // that carries them (there are 2 tool_use blocks total).
+    assert.equal(parsed.toolCallCount, 2);
+  });
+
+  it("dedupes memberNodeIds and sums outputTokens once per response on the timeline", async () => {
+    const sessionId = "resp-group-timeline";
+    const { detail } = await parseSyntheticSession(sessionId, buildEntries(sessionId, true));
+
+    // 6. One timeline point; memberNodeIds deduped to one id per response.
+    assert.equal(detail.timeline.length, 1);
+    const point = detail.timeline[0];
+    assert.deepEqual(point.memberNodeIds, ["a1", "a5"]);
+    assert.equal(point.outputTokens, 140);
+  });
+
+  it("attributes context growth to every tool call in a parallel batch, weighted by result size", async () => {
+    const sessionId = "resp-group-attribution";
+    const { detail } = await parseSyntheticSession(sessionId, buildEntries(sessionId, true));
+
+    // 7. causedBy contains both calls, not just the batch's last one, with
+    // the larger result (toolu_r2) attributed the larger share.
+    const point = detail.timeline[0];
+    const byId = new Map(point.causedBy.map((c) => [c.toolUseId, c]));
+    assert.ok(byId.has("toolu_r1"));
+    assert.ok(byId.has("toolu_r2"));
+    const r1 = byId.get("toolu_r1")!;
+    const r2 = byId.get("toolu_r2")!;
+    assert.ok(r2.contextGrowthAttributed > r1.contextGrowthAttributed);
+    assert.equal(r1.contextGrowthAttributed + r2.contextGrowthAttributed, 500);
+  });
+
+  it("falls back to per-line nodes and today's summed usage when message.id is absent", async () => {
+    const sessionId = "resp-group-fallback";
+    const { parsed, detail } = await parseSyntheticSession(
+      sessionId,
+      buildEntries(sessionId, false),
+    );
+
+    // 9. Fallback: no message.id anywhere means every line is its own node,
+    // and totals are summed exactly as they were before this change.
+    const assistantIds = detail.tree.children
+      .filter((c) => c.kind === "assistant_message")
+      .map((c) => c.id);
+    assert.deepEqual(assistantIds, ["a1", "a2", "a3", "a4", "a5"]);
+
+    assert.equal(detail.timeline.length, 1);
+    assert.equal(detail.timeline[0].memberNodeIds.length, 5);
+
+    assert.deepEqual(parsed.usage, {
+      inputTokens: 1000 * 4 + 1500,
+      outputTokens: 1 + 5 + 50 + 120 + 20,
+      cacheCreationInputTokens: 10 * 4 + 10,
+      cacheReadInputTokens: 0,
+    });
+  });
+
+  it("starts a new group for a line whose message.id is missing, even mid-response", async () => {
+    // Mixed availability within what should be one response: `m1` carries
+    // `message.id`, `m2` (chained off `m1` via parentUuid, no intervening
+    // user prompt) does not. `computeResponseGroups` keys strictly on
+    // `message.id` (`const key = ... ? rawId : null; let group = key != null
+    // ? open.get(key) : undefined;` — a null key never looks up an open
+    // group, and `if (key != null) open.set(...)` never registers one
+    // either), so a null/missing id always starts its own singleton group
+    // rather than joining the still-open group for `m1`. This test locks in
+    // that behavior: two assistant nodes, not one.
+    const sessionId = "resp-group-mixed-id";
+    const { detail } = await parseSyntheticSession(sessionId, [
+      {
+        type: "user",
+        uuid: "u0",
+        parentUuid: null,
+        timestamp: "2026-05-03T00:00:00.000Z",
+        sessionId,
+        message: { role: "user", content: "Read one file." },
+      },
+      {
+        type: "assistant",
+        uuid: "m1",
+        parentUuid: "u0",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          id: "msg_mixed",
+          content: [{ type: "text", text: "Reading the file now." }],
+          usage: {
+            input_tokens: 1000,
+            output_tokens: 5,
+            cache_creation_input_tokens: 10,
+            cache_read_input_tokens: 0,
+          },
+        },
+      },
+      {
+        // Same logical response, chained off `m1` with no user prompt in
+        // between — but `message.id` is absent on this line.
+        type: "assistant",
+        uuid: "m2",
+        parentUuid: "m1",
+        timestamp: "2026-05-03T00:00:02.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          content: [
+            { type: "tool_use", id: "toolu_mixed", name: "Read", input: { file_path: "a.ts" } },
+          ],
+          usage: {
+            input_tokens: 1000,
+            output_tokens: 50,
+            cache_creation_input_tokens: 10,
+            cache_read_input_tokens: 0,
+          },
+        },
+      },
+    ]);
+
+    const assistantIds = detail.tree.children
+      .filter((c) => c.kind === "assistant_message")
+      .map((c) => c.id);
+    assert.deepEqual(assistantIds, ["m1", "m2"]);
+  });
+
+  it("never merges a reused message.id across a real user prompt", async () => {
+    const sessionId = "resp-group-turn-boundary";
+    const { parsed, detail } = await parseSyntheticSession(sessionId, [
+      {
+        type: "user",
+        uuid: "u1",
+        parentUuid: null,
+        timestamp: "2026-05-02T00:00:00.000Z",
+        sessionId,
+        message: { role: "user", content: "start" },
+      },
+      {
+        type: "assistant",
+        uuid: "b1",
+        parentUuid: "u1",
+        timestamp: "2026-05-02T00:00:01.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          id: "msg_boundary",
+          content: [{ type: "text", text: "first" }],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+      },
+      {
+        type: "user",
+        uuid: "u2",
+        parentUuid: "b1",
+        timestamp: "2026-05-02T00:00:02.000Z",
+        sessionId,
+        message: { role: "user", content: "actually stop" },
+      },
+      {
+        type: "assistant",
+        uuid: "b2",
+        parentUuid: "u2",
+        timestamp: "2026-05-02T00:00:03.000Z",
+        sessionId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-20250514",
+          // Same message.id reused — must not merge across the user prompt.
+          id: "msg_boundary",
+          content: [{ type: "text", text: "second" }],
+          usage: {
+            input_tokens: 20,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+      },
+    ]);
+
+    // 10. Turn-boundary guard: 2 assistant nodes and 2 turns, never merged.
+    assert.equal(parsed.turnCount, 2);
+    assert.equal(detail.timeline.length, 2);
+    const assistantIds = detail.tree.children
+      .filter((c) => c.kind === "assistant_message")
+      .map((c) => c.id);
+    assert.deepEqual(assistantIds, ["b1", "b2"]);
+  });
+});

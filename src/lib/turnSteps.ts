@@ -92,8 +92,11 @@ export interface EnrichedStep {
   agentLabel: string;
   /**
    * Id of the enclosing `assistant_message` node — the one model call this
-   * tool_use block came from. Distinct from `turn`, which absorbs several
-   * assistant messages: calls sharing this id went out in parallel.
+   * tool_use block came from. A node is now one API response, merged from
+   * however many JSONL lines shared its `message.id` (`computeResponseGroups`
+   * in `server/parser.ts`), so "calls sharing this id went out in parallel" is
+   * finally true of real transcripts, not just hand-packed fixtures.
+   * Distinct from `turn`, which absorbs several assistant messages.
    */
   assistantNodeId: string | null;
   turn: number | null;
@@ -197,13 +200,17 @@ export interface ModelCall {
   /** Null only for the synthetic row holding steps with no assistant message. */
   assistantNodeId: string | null;
   /** The node's own `label`: `"Assistant · Read, Grep"` when it emitted tool
-   *  blocks, plain `"Assistant"` when it did not (`server/parser.ts:2022`). */
+   *  blocks, plain `"Assistant"` when it did not (`server/parser.ts:2198-2200`). */
   label: string;
   preview: string | null;
   /**
-   * Null when the entry billed no input/cache tokens: the parser writes `usage`
-   * and `context` only when `totalTokens(usage) > 0` (`parser.ts:2025-2033`), so
-   * these two are absent together.
+   * `usage`/`context` are the response's merged figures, not one JSONL line's:
+   * input and cache tokens are taken once (they're replicated on every line of
+   * a response), `outputTokens` is the final/max value across the response's
+   * lines rather than a sum. Null when the response billed no input/cache
+   * tokens: the parser writes `usage` and `context` only when
+   * `totalTokens(usage) > 0` (`parser.ts:2203-2211`), so these two are absent
+   * together.
    */
   usage: TokenUsage | null;
   context: ContextDelta | null;
@@ -373,7 +380,8 @@ export function buildStepBars(calls: ModelCall[]): StepBar[] {
  * value — then climbs by that step's own `contextGrowthAttributed` in order,
  * so a parallel call's steps read as a ramp instead of a repeated figure.
  * `contextGrowthAttributed` is attributed at the *next* call's usage jump
- * (`server/parser.ts:829-850`), so this is an estimate of context state
+ * (`server/parser.ts:945-971`), computed once per response from its merged
+ * usage rather than per JSONL line, so this is an estimate of context state
  * mid-call, not a second measured source.
  */
 export function buildStepRunningContext(calls: ModelCall[]): Map<string, number> {

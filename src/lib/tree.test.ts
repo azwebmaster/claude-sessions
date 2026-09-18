@@ -230,6 +230,37 @@ describe("tree helpers", () => {
     assert.equal(toolThree!.subagentId, null);
   });
 
+  it("gives all three tool_call children of one assistant_message the same turnNodeId", () => {
+    // The parser now merges every JSONL line of one API response into a
+    // single `assistant_message` node keyed by `message.id`, so a real
+    // parallel batch is one node with several `tool_call` children — not
+    // several one-tool-call assistant nodes.
+    const parallelRoot = node({
+      id: "root",
+      kind: "root_agent",
+      agentId: "root",
+      label: "Root agent",
+      children: [
+        node({
+          id: "ag1",
+          kind: "assistant_message",
+          children: [
+            node({ id: "call-p1", kind: "tool_call", toolUseId: "use-p1", toolName: "Read" }),
+            node({ id: "call-p2", kind: "tool_call", toolUseId: "use-p2", toolName: "Read" }),
+            node({ id: "call-p3", kind: "tool_call", toolUseId: "use-p3", toolName: "Read" }),
+          ],
+        }),
+      ],
+    });
+
+    const steps = collectSteps(parallelRoot);
+    assert.deepEqual(
+      steps.map((s) => s.nodeId),
+      ["call-p1", "call-p2", "call-p3"],
+    );
+    assert.deepEqual(steps.map((s) => s.turnNodeId), ["ag1", "ag1", "ag1"]);
+  });
+
   it("returns an empty list when the tree has no tool calls", () => {
     const noTools = node({
       id: "root",

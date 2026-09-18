@@ -341,8 +341,7 @@ export function TurnDetailPane({
     return callsForTurn(scope.modelCalls, turnNumber);
   }, [index, selection.scopeId, turnNumber]);
 
-  // A `ModelCall` with no steps (a tool-less assistant turn, or one whose
-  // steps all landed on another call sharing its `parallelGroupId`) renders
+  // A `ModelCall` with no steps (a tool-less assistant response) renders
   // no row — `StepList`'s `ModelCallGroup` returns null for
   // `call.steps.length === 0`. This filtered view is only for the tab label
   // and the empty-state check, so `Calls (${visibleCalls.length})` cannot

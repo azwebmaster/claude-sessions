@@ -14,6 +14,7 @@ import {
   buildModelCalls,
   buildSessionWorkspaceIndex,
   buildStepBars,
+  buildStepRunningContext,
   buildTurnNodeIndex,
   callsForTurn,
   enrichSteps,
@@ -863,6 +864,110 @@ describe("buildStepBars", () => {
       buildStepBars(calls).map((b) => b.step.nodeId),
       ["s1"],
     );
+  });
+});
+
+describe("response grouping (one assistant node, N parallel tool_call children)", () => {
+  // The parser now materializes one `assistant_message` node per API
+  // response — every JSONL line sharing that response's `message.id` merges
+  // into it (`computeResponseGroups` in `server/parser.ts`) — so a client
+  // tree with 3 `tool_call` children under one assistant node is what a real
+  // parallel batch looks like, not a synthetic-only shape.
+  const points = [point(1, "ag1", ["ag1"])];
+
+  function parallelTree(): TreeNode {
+    return node({
+      id: "sess-p",
+      kind: "root_agent",
+      agentId: "sess-p",
+      label: "Root agent",
+      children: [
+        node({
+          id: "ag1",
+          kind: "assistant_message",
+          label: "Assistant · Read, Read, Read",
+          context: { addedTokens: 30, contextAfter: 900, contextDelta: 300 },
+          children: [
+            node({ id: "call-p1", kind: "tool_call", toolUseId: "use-p1", toolName: "Read" }),
+            node({ id: "call-p2", kind: "tool_call", toolUseId: "use-p2", toolName: "Read" }),
+            node({ id: "call-p3", kind: "tool_call", toolUseId: "use-p3", toolName: "Read" }),
+          ],
+        }),
+      ],
+    });
+  }
+
+  function parallelCalls() {
+    const tree = parallelTree();
+    const steps = collectSteps(tree).filter((s) => s.agentId === "sess-p");
+    const enriched = enrichSteps({
+      steps,
+      toolIndex: indexToolImpact([]),
+      turnByAssistantNodeId: buildTurnNodeIndex(tree, points),
+    });
+    return buildModelCalls(tree, enriched, buildTurnNodeIndex(tree, points));
+  }
+
+  it("yields one ModelCall with steps.length === 3 sharing one assistantNodeId", () => {
+    const calls = parallelCalls();
+    assert.equal(calls.length, 1);
+    const [call] = calls;
+    assert.equal(call!.assistantNodeId, "ag1");
+    assert.equal(call!.steps.length, 3);
+    for (const step of call!.steps) {
+      assert.equal(step.assistantNodeId, "ag1");
+    }
+  });
+
+  it("gives buildStepBars one groupKey, groupSize 3, groupIndex [0,1,2], equal contextAfter", () => {
+    const bars = buildStepBars(parallelCalls());
+    assert.equal(bars.length, 3);
+    for (const bar of bars) {
+      assert.equal(bar.groupKey, "ag1");
+      assert.equal(bar.groupSize, 3);
+      assert.equal(bar.contextAfter, 900);
+    }
+    assert.deepEqual(bars.map((b) => b.groupIndex), [0, 1, 2]);
+  });
+
+  it("ramps buildStepRunningContext across the group's steps", () => {
+    const calls = parallelCalls();
+    // Distinct per-step growth so the ramp is observable — real attribution
+    // splits one response's usage jump pro-rata across its parallel calls.
+    calls[0]!.steps[0]!.contextGrowthAttributed = 100;
+    calls[0]!.steps[1]!.contextGrowthAttributed = 150;
+    calls[0]!.steps[2]!.contextGrowthAttributed = 50;
+    const running = buildStepRunningContext(calls);
+    assert.deepEqual(
+      ["call-p1", "call-p2", "call-p3"].map((id) => running.get(id)),
+      [1000, 1150, 1200],
+    );
+  });
+
+  it("gives the Calls tab visibleCalls.length === 1 with stepCountsByTurn().get(1) === 3", () => {
+    const detail: SessionDetail = {
+      meta: { id: "sess-p" } as SessionListItem,
+      tree: parallelTree(),
+      timeline: points,
+      toolImpact: [],
+      agentBreakdown: [],
+      agents: [
+        agent({
+          agentId: "sess-p",
+          kind: "root_agent",
+          label: "Root agent",
+          timeline: points,
+          toolImpact: [],
+        }),
+      ],
+      loadedContext: [],
+      logLines: {},
+    };
+    const index = buildSessionWorkspaceIndex(detail);
+    const scope = index.scopes.get("sess-p")!;
+    const visibleCalls = scope.modelCalls.filter((c) => c.steps.length > 0);
+    assert.equal(visibleCalls.length, 1);
+    assert.equal(stepCountsByTurn(scope.modelCalls).get(1), 3);
   });
 });
 

@@ -126,7 +126,10 @@ function ModelCallGroup({
   const accent = schemePalette(theme).info.main;
   // Gated on provenance, not on step count alone: `buildModelCalls` appends one
   // `assistantNodeId: null` row for the steps that came from no model call at
-  // all, and two of those did not go out together.
+  // all, and two of those did not go out together. `assistantNodeId` is one
+  // `assistant_message` node — the parser's merge of every JSONL line sharing
+  // one API response's `message.id` — so `steps.length > 1` here means real
+  // parallel tool calls, not just multiple lines of the same response.
   const parallel = call.assistantNodeId != null && call.steps.length > 1;
 
   // A call with no tool use has no chip to anchor a line to, and this tab is
